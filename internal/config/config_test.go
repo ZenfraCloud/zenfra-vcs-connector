@@ -540,3 +540,61 @@ func TestConfigStringReportsMetricsState(t *testing.T) {
 		t.Errorf("String() should name the metrics listener: %s", cfg.String())
 	}
 }
+
+func TestLoadEnrollmentKeyFile(t *testing.T) {
+	tests := []struct {
+		name   string
+		args   []string
+		getenv func(string) string
+		want   string
+	}{
+		{
+			name:   "disabled by default",
+			args:   validArgs(),
+			getenv: env(nil),
+			want:   "",
+		},
+		{
+			name:   "flag sets the path",
+			args:   append(validArgs(), "--enrollment-key-file", "/var/lib/zenfra/enrollment-key"),
+			getenv: env(nil),
+			want:   "/var/lib/zenfra/enrollment-key",
+		},
+		{
+			name:   "environment fallback",
+			args:   validArgs(),
+			getenv: env(map[string]string{EnvEnrollmentKeyFile: "/state/enrollment-key"}),
+			want:   "/state/enrollment-key",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Load(tt.args, tt.getenv)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.EnrollmentKeyFile != tt.want {
+				t.Fatalf("EnrollmentKeyFile = %q, want %q", cfg.EnrollmentKeyFile, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfigStringReportsEnrollmentState(t *testing.T) {
+	cfg, err := Load(validArgs(), env(nil))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !strings.Contains(cfg.String(), "enrollment-key-file=disabled") {
+		t.Errorf("String() = %q, want the disabled enrollment state", cfg.String())
+	}
+
+	cfg, err = Load(append(validArgs(), "--enrollment-key-file", "/state/enrollment-key"), env(nil))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !strings.Contains(cfg.String(), "enrollment-key-file=/state/enrollment-key") {
+		t.Errorf("String() = %q, want the configured key path", cfg.String())
+	}
+}

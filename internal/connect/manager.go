@@ -71,10 +71,12 @@ func NewManager(cfg *config.Config, client *Client, dialer *Dialer, version stri
 		tokens: &tokenSource{
 			client:         client,
 			bootstrapToken: cfg.BootstrapToken,
+			enrollment:     enrollmentStore{path: cfg.EnrollmentKeyFile},
 			instanceKey:    cfg.InstanceKey,
 			version:        version,
 			skew:           DefaultRefreshSkew,
 			now:            time.Now,
+			logger:         logger,
 		},
 	}
 }
@@ -189,10 +191,15 @@ func (e *retryableError) Retryable() bool { return true }
 type tokenSource struct {
 	client         *Client
 	bootstrapToken string
-	instanceKey    string
-	version        string
-	skew           time.Duration
-	now            func() time.Time
+	// enrollment persists this instance's own key. Once stored it is what
+	// registration presents, so revoking this instance ends its access for good —
+	// the bootstrap token cannot bring it back.
+	enrollment  enrollmentStore
+	instanceKey string
+	version     string
+	skew        time.Duration
+	now         func() time.Time
+	logger      *slog.Logger
 
 	mu  sync.Mutex
 	cur *Instance
@@ -205,7 +212,7 @@ func (t *tokenSource) get(ctx context.Context) (string, error) {
 	defer t.mu.Unlock()
 
 	if t.cur == nil {
-		inst, err := t.client.Register(ctx, t.bootstrapToken, t.instanceKey, t.version)
+		inst, err := t.register(ctx)
 		if err != nil {
 			return "", err
 		}
@@ -218,13 +225,41 @@ func (t *tokenSource) get(ctx context.Context) (string, error) {
 
 	// ponytail: refreshing revokes the jti every live stream shares, so the
 	// gateway drops them and they reconnect on the new token. Per-stream tokens
-	// need per-instance jti support (plan Task 20).
+	// would need one jti per stream; add that if the reconnect storm ever matters.
 	inst, err := t.client.Refresh(ctx, t.cur.Token)
 	if err != nil {
 		return "", err
 	}
 	t.cur = inst
 	return inst.Token, nil
+}
+
+// register presents the stored enrollment key when there is one, and the
+// bootstrap token otherwise, persisting whatever key the response hands back. A
+// rejected enrollment key is never retried with the bootstrap token: that is the
+// revocation this whole mechanism exists to make stick.
+func (t *tokenSource) register(ctx context.Context) (*Instance, error) {
+	credential := t.enrollment.load()
+	enrolled := credential != ""
+	if !enrolled {
+		credential = t.bootstrapToken
+	}
+
+	inst, err := t.client.Register(ctx, credential, t.instanceKey, t.version)
+	if err != nil {
+		if enrolled {
+			t.logger.Error("registration with the stored enrollment key was refused; "+
+				"remove the key file to enroll this instance again", "error", err)
+		}
+		return nil, err
+	}
+
+	if saveErr := t.enrollment.save(inst.EnrollmentKey); saveErr != nil {
+		// The token works, so keep running; the cost is bootstrapping again on
+		// the next restart rather than a failed connector.
+		t.logger.Warn("could not persist the enrollment key", "error", saveErr)
+	}
+	return inst, nil
 }
 
 // invalidate drops token if it is still the current one, forcing a re-mint.

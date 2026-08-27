@@ -31,6 +31,10 @@ type Instance struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 	Endpoint    string    `json:"endpoint"`
 	Vendor      string    `json:"vendor"`
+	// EnrollmentKey is this instance's own credential, returned only by the
+	// registration that issued it. Persisted, it replaces the bootstrap token,
+	// so revoking this instance cannot be undone with the fleet-wide one.
+	EnrollmentKey string `json:"enrollment_key,omitempty"`
 }
 
 // APIError is a non-2xx response from the control plane.
@@ -82,13 +86,14 @@ func NewClient(baseURL string, httpClient *http.Client) *Client {
 	return &Client{baseURL: baseURL, http: httpClient}
 }
 
-// Register exchanges the bootstrap token for an instance record and its first JWT.
-func (c *Client) Register(ctx context.Context, bootstrapToken, instanceKey, version string) (*Instance, error) {
+// Register exchanges a registration credential — the connector's bootstrap token
+// or this instance's own enrollment key — for an instance record and a fresh JWT.
+func (c *Client) Register(ctx context.Context, credential, instanceKey, version string) (*Instance, error) {
 	body, err := json.Marshal(map[string]string{"instance_key": instanceKey, "version": version})
 	if err != nil {
 		return nil, fmt.Errorf("marshal register request: %w", err)
 	}
-	return c.post(ctx, registerPath, bootstrapToken, body)
+	return c.post(ctx, registerPath, credential, body)
 }
 
 // Refresh trades the current instance JWT for a fresh one, revoking the old jti.

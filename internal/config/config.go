@@ -61,6 +61,7 @@ const (
 	EnvAllowedProjects        = "ZENFRA_VCS_CONNECTOR_ALLOWED_PROJECTS"
 	EnvAllProjects            = "ZENFRA_VCS_CONNECTOR_ALL_PROJECTS"
 	EnvInstanceKey            = "ZENFRA_VCS_CONNECTOR_INSTANCE_KEY"
+	EnvEnrollmentKeyFile      = "ZENFRA_VCS_CONNECTOR_ENROLLMENT_KEY_FILE" //nolint:gosec // env var name
 	EnvCABundle               = "ZENFRA_VCS_CONNECTOR_CA_BUNDLE"
 	EnvUpstreamCABundle       = "ZENFRA_VCS_CONNECTOR_UPSTREAM_CA_BUNDLE"
 	EnvInteractiveConnections = "ZENFRA_VCS_CONNECTOR_INTERACTIVE_CONNECTIONS"
@@ -87,6 +88,11 @@ type Config struct {
 	UpstreamCABundle string
 	// InstanceKey is this process's stable self-identifier, defaulting to the hostname.
 	InstanceKey string
+	// EnrollmentKeyFile is where this instance persists the per-instance key the
+	// control plane issues at first registration. With it set, the bootstrap token
+	// is used exactly once and revoking this instance is enough to end its access;
+	// without it, every restart re-registers with the fleet-wide bootstrap token.
+	EnrollmentKeyFile string
 
 	// Vendor and Endpoint must match the connector record or the gateway refuses
 	// the tunnel upgrade.
@@ -124,15 +130,19 @@ func (c *Config) String() string {
 	if c.CodeloadEndpoint != "" && c.CodeloadEndpoint != c.Endpoint {
 		codeload = " codeload=" + c.CodeloadEndpoint
 	}
+	enrollment := "enrollment-key-file=disabled"
+	if c.EnrollmentKeyFile != "" {
+		enrollment = "enrollment-key-file=" + c.EnrollmentKeyFile
+	}
 	metrics := "metrics=disabled"
 	if c.MetricsAddr != "" {
 		metrics = "metrics=" + c.MetricsAddr
 	}
 	return fmt.Sprintf(
 		"gateway=%s vendor=%s endpoint=%s%s instance=%s %s interactive=%d secret-file=%s "+
-			"ca-bundle=%s upstream-ca-bundle=%s %s",
+			"ca-bundle=%s upstream-ca-bundle=%s %s %s",
 		c.GatewayURL, c.Vendor, c.Endpoint, codeload, c.InstanceKey, scope,
-		c.InteractiveConnections, c.SecretFile, c.CABundle, c.UpstreamCABundle, metrics,
+		c.InteractiveConnections, c.SecretFile, c.CABundle, c.UpstreamCABundle, enrollment, metrics,
 	)
 }
 
@@ -168,6 +178,8 @@ func Load(args []string, getenv func(string) string) (*Config, error) {
 		"serve every project the credential can reach instead of an allowlist")
 	fs.StringVar(&cfg.InstanceKey, "instance-key", getenv(EnvInstanceKey),
 		"stable identifier for this instance (default: hostname)")
+	fs.StringVar(&cfg.EnrollmentKeyFile, "enrollment-key-file", getenv(EnvEnrollmentKeyFile),
+		"path this instance stores its per-instance enrollment key in (default: disabled)")
 	fs.StringVar(&cfg.CABundle, "ca-bundle", getenv(EnvCABundle),
 		"PEM bundle of trust roots for the gateway connection (default: system roots)")
 	fs.StringVar(&cfg.UpstreamCABundle, "upstream-ca-bundle", getenv(EnvUpstreamCABundle),
