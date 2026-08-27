@@ -17,6 +17,10 @@ const (
 	DefaultChunkBytes = 32 * 1024
 )
 
+// HeaderPolicyRule carries the connector allowlist rule that authorized a request
+// back on its response head, so the gateway's audit record can name the rule.
+const HeaderPolicyRule = "X-Zenfra-Policy-Rule"
+
 // Stable wire error codes carried in Error.code. Renaming one breaks deployed
 // connectors — treat as append-only.
 const (
