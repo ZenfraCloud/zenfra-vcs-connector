@@ -96,9 +96,12 @@ func NewEngine(cfg *config.Config) (*Engine, error) {
 		rules = gitHubRules()
 	case config.VendorBitbucket:
 		rules = bitbucketRules()
+	case config.VendorAzureDevOps:
+		rules = azureDevOpsRules()
 	default:
-		return nil, fmt.Errorf("policy: no allowlist for vendor %q, want %q, %q or %q",
-			cfg.Vendor, config.VendorGitLab, config.VendorGitHub, config.VendorBitbucket)
+		return nil, fmt.Errorf("policy: no allowlist for vendor %q, want %q, %q, %q or %q",
+			cfg.Vendor, config.VendorGitLab, config.VendorGitHub,
+			config.VendorBitbucket, config.VendorAzureDevOps)
 	}
 	e := &Engine{
 		vendor:      cfg.Vendor,

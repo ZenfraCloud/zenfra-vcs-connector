@@ -26,10 +26,14 @@ const (
 	// Cloud is a different API and needs no connector, so the REST surface here
 	// is the /rest/api/1.0 one.
 	VendorBitbucket Vendor = "bitbucket"
+	// VendorAzureDevOps is an Azure DevOps Server (formerly TFS) collection. The
+	// endpoint includes the collection — /_apis lives under it — so a tunneled
+	// path starts at the project or at _apis itself.
+	VendorAzureDevOps Vendor = "azure_devops"
 )
 
 // supportedVendors is the set --vendor accepts, in the order the error lists them.
-var supportedVendors = []Vendor{VendorGitLab, VendorGitHub, VendorBitbucket}
+var supportedVendors = []Vendor{VendorGitLab, VendorGitHub, VendorBitbucket, VendorAzureDevOps}
 
 // supported reports whether v has a compiled allowlist.
 func (v Vendor) supported() bool {
@@ -140,11 +144,12 @@ func Load(args []string, getenv func(string) string) (*Config, error) {
 	fs.StringVar(&cfg.BootstrapToken, "bootstrap-token", getenv(EnvBootstrapToken),
 		"connector bootstrap token (vcsc_...)")
 	fs.StringVar(&cfg.Endpoint, "endpoint", getenv(EnvEndpoint),
-		"upstream VCS base URL, e.g. https://gitlab.internal")
+		"upstream VCS base URL, e.g. https://gitlab.internal "+
+			"(Azure DevOps: include the collection, e.g. https://tfs.internal/DefaultCollection)")
 	fs.StringVar(&cfg.CodeloadEndpoint, "codeload-endpoint", getenv(EnvCodeloadEndpoint),
 		"pinned origin serving GitHub archive downloads (default: the endpoint)")
 	fs.StringVar((*string)(&cfg.Vendor), "vendor", getenv(EnvVendor),
-		"upstream VCS vendor (gitlab, github)")
+		"upstream VCS vendor ("+vendorList()+")")
 	fs.StringVar(&cfg.SecretFile, "secret-file", getenv(EnvSecretFile),
 		"path to the file holding the upstream VCS credential")
 	fs.StringVar(&allowedProjects, "allowed-projects", getenv(EnvAllowedProjects),

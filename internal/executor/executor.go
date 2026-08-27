@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -29,6 +30,8 @@ const (
 	gitLabTokenHeader = "PRIVATE-TOKEN"
 	gitHubAuthHeader  = "Authorization"
 	gitHubAuthScheme  = "Bearer "
+	// Azure DevOps authenticates a PAT as HTTP Basic with an empty username.
+	azureDevOpsAuthScheme = "Basic "
 )
 
 // maxRedirectsFollowed is the number of redirects the connector resolves itself:
@@ -341,12 +344,16 @@ func (e *Executor) buildRequest(
 }
 
 // authorize attaches the vendor's credential header. GitHub Enterprise and
-// Bitbucket Data Center both authenticate their tokens as bearer credentials;
-// GitLab uses its own header.
+// Bitbucket Data Center both authenticate their tokens as bearer credentials,
+// Azure DevOps takes its PAT as HTTP Basic with an empty username, and GitLab
+// uses its own header.
 func (e *Executor) authorize(req *http.Request, token string) {
 	switch e.vendor {
 	case config.VendorGitHub, config.VendorBitbucket:
 		req.Header.Set(gitHubAuthHeader, gitHubAuthScheme+token)
+	case config.VendorAzureDevOps:
+		encoded := base64.StdEncoding.EncodeToString([]byte(":" + token))
+		req.Header.Set(gitHubAuthHeader, azureDevOpsAuthScheme+encoded)
 	default:
 		req.Header.Set(gitLabTokenHeader, token)
 	}

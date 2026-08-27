@@ -63,7 +63,10 @@ var forwardableResponseHeaders = map[string]bool{
 	// Bitbucket Data Center names the authenticated user here on every
 	// authenticated response; it has no "current user" endpoint, so this header
 	// is what an integration verify observes. It carries no credential.
-	"X-Ausername":             true,
+	"X-Ausername": true,
+	// Azure DevOps pages its list resources with a continuation token in this
+	// header rather than in the body.
+	"X-Ms-Continuationtoken":  true,
 	"X-Gitlab-Blob-Id":        true,
 	"X-Gitlab-Content-Sha256": true,
 	"X-Gitlab-Size":           true,
