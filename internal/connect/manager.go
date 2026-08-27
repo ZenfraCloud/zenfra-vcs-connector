@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/config"
+	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/metrics"
 )
 
 // Reconnect and token-lifecycle bounds.
@@ -50,6 +51,9 @@ type Manager struct {
 	// Reconnect bounds, overridable in tests.
 	BackoffBase time.Duration
 	BackoffCap  time.Duration
+
+	// Metrics is the optional Prometheus collector; nil disables it.
+	Metrics *metrics.Collector
 }
 
 // NewManager wires a manager for one connector instance.
@@ -165,6 +169,9 @@ func (m *Manager) connectOnce(ctx context.Context, lane Lane) (bool, error) {
 		}
 		return false, err
 	}
+
+	m.Metrics.StreamOpened()
+	defer m.Metrics.StreamClosed()
 	return true, conn.Serve(ctx)
 }
 

@@ -7,14 +7,18 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/config"
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/connect"
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/executor"
+	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/metrics"
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/policy"
 )
 
@@ -73,17 +77,55 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 		return fmt.Errorf("building executor: %w", err)
 	}
 
+	collector := metrics.New(time.Now())
+	exec.Metrics = collector
+	stopMetrics, err := serveMetrics(cfg.MetricsAddr, collector, logger)
+	if err != nil {
+		return err
+	}
+	defer stopMetrics()
+
 	dialer, err := connect.NewDialer(cfg, engine.PolicyHash(), exec.Handler(), logger)
 	if err != nil {
 		return fmt.Errorf("building tunnel dialer: %w", err)
 	}
 
 	manager := connect.NewManager(cfg, connect.NewClient(cfg.GatewayURL, nil), dialer, version, logger)
+	manager.Metrics = collector
 	if err := manager.Run(ctx); err != nil {
 		return fmt.Errorf("tunnel stopped: %w", err)
 	}
 	logger.Info("zenfra-vcs-connector stopped")
 	return nil
+}
+
+// serveMetrics starts the optional Prometheus endpoint and returns its shutdown.
+// The listener is opened synchronously so an unusable address fails startup
+// instead of silently never serving.
+func serveMetrics(
+	addr string,
+	collector *metrics.Collector,
+	logger *slog.Logger,
+) (func(), error) {
+	if addr == "" {
+		return func() {}, nil
+	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("%w: --metrics-addr %s: %w", config.ErrInvalidConfig, addr, err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", collector.Handler())
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	go func() {
+		if serveErr := srv.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			logger.Error("metrics endpoint stopped", "error", serveErr)
+		}
+	}()
+	logger.Info("metrics endpoint listening", "addr", listener.Addr().String())
+
+	return func() { _ = srv.Close() }, nil
 }
 
 // newLogger builds the structured JSON logger. Output is stderr so a container's

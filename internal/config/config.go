@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"path"
@@ -64,6 +65,7 @@ const (
 	EnvUpstreamCABundle       = "ZENFRA_VCS_CONNECTOR_UPSTREAM_CA_BUNDLE"
 	EnvInteractiveConnections = "ZENFRA_VCS_CONNECTOR_INTERACTIVE_CONNECTIONS"
 	EnvLogLevel               = "ZENFRA_VCS_CONNECTOR_LOG_LEVEL"
+	EnvMetricsAddr            = "ZENFRA_VCS_CONNECTOR_METRICS_ADDR"
 )
 
 // ErrInvalidConfig marks a terminal configuration problem. A connector that gets
@@ -106,6 +108,10 @@ type Config struct {
 
 	InteractiveConnections int
 	LogLevel               string
+	// MetricsAddr optionally serves a Prometheus endpoint on host:port. Empty
+	// disables it: the connector runs inside the customer's network, so exposing
+	// a listener at all is their decision.
+	MetricsAddr string
 }
 
 // String renders the config for diagnostics with credentials redacted.
@@ -118,11 +124,15 @@ func (c *Config) String() string {
 	if c.CodeloadEndpoint != "" && c.CodeloadEndpoint != c.Endpoint {
 		codeload = " codeload=" + c.CodeloadEndpoint
 	}
+	metrics := "metrics=disabled"
+	if c.MetricsAddr != "" {
+		metrics = "metrics=" + c.MetricsAddr
+	}
 	return fmt.Sprintf(
 		"gateway=%s vendor=%s endpoint=%s%s instance=%s %s interactive=%d secret-file=%s "+
-			"ca-bundle=%s upstream-ca-bundle=%s",
+			"ca-bundle=%s upstream-ca-bundle=%s %s",
 		c.GatewayURL, c.Vendor, c.Endpoint, codeload, c.InstanceKey, scope,
-		c.InteractiveConnections, c.SecretFile, c.CABundle, c.UpstreamCABundle,
+		c.InteractiveConnections, c.SecretFile, c.CABundle, c.UpstreamCABundle, metrics,
 	)
 }
 
@@ -167,6 +177,8 @@ func Load(args []string, getenv func(string) string) (*Config, error) {
 		"number of interactive tunnel streams to maintain")
 	fs.StringVar(&cfg.LogLevel, "log-level", orDefault(getenv(EnvLogLevel), "info"),
 		"log level (debug, info, warn, error)")
+	fs.StringVar(&cfg.MetricsAddr, "metrics-addr", getenv(EnvMetricsAddr),
+		"serve Prometheus metrics on this host:port (default: disabled)")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidConfig, err)
@@ -179,8 +191,8 @@ func Load(args []string, getenv func(string) string) (*Config, error) {
 	return cfg, nil
 }
 
-// normalize validates every setting and canonicalizes the URLs.
-func (c *Config) normalize() error {
+// checkRequired verifies every setting that has no usable default.
+func (c *Config) checkRequired() error {
 	for _, required := range []struct {
 		value, flag, env string
 	}{
@@ -194,6 +206,14 @@ func (c *Config) normalize() error {
 			return fmt.Errorf("%w: %s is required (or set %s)",
 				ErrInvalidConfig, required.flag, required.env)
 		}
+	}
+	return nil
+}
+
+// normalize validates every setting and canonicalizes the URLs.
+func (c *Config) normalize() error {
+	if err := c.checkRequired(); err != nil {
+		return err
 	}
 
 	if !c.Vendor.supported() {
@@ -231,6 +251,10 @@ func (c *Config) normalize() error {
 			ErrInvalidConfig, c.InteractiveConnections)
 	}
 
+	if err := c.normalizeMetricsAddr(); err != nil {
+		return err
+	}
+
 	if c.InstanceKey == "" {
 		host, hostErr := os.Hostname()
 		if hostErr != nil || host == "" {
@@ -238,6 +262,20 @@ func (c *Config) normalize() error {
 				ErrInvalidConfig, hostErr)
 		}
 		c.InstanceKey = host
+	}
+	return nil
+}
+
+// normalizeMetricsAddr validates the optional metrics listener address. A bad
+// address is terminal: binding it later would fail the same way every time.
+func (c *Config) normalizeMetricsAddr() error {
+	c.MetricsAddr = strings.TrimSpace(c.MetricsAddr)
+	if c.MetricsAddr == "" {
+		return nil
+	}
+	if _, _, err := net.SplitHostPort(c.MetricsAddr); err != nil {
+		return fmt.Errorf("%w: --metrics-addr must be host:port (or set %s): %w",
+			ErrInvalidConfig, EnvMetricsAddr, err)
 	}
 	return nil
 }

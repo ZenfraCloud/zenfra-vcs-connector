@@ -20,6 +20,7 @@ import (
 
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/config"
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/connect"
+	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/metrics"
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/policy"
 	"github.com/ZenfraCloud/zenfra-vcs-connector/tunnel"
 )
@@ -107,6 +108,8 @@ type Executor struct {
 	client     *http.Client
 	limits     Limits
 	audit      *slog.Logger
+	// Metrics is the optional Prometheus collector; nil disables it.
+	Metrics *metrics.Collector
 }
 
 // New builds an executor for the configured endpoint. audit receives exactly one

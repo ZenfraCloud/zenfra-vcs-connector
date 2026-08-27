@@ -43,8 +43,11 @@ type auditRecord struct {
 	ResponseBytes int64
 }
 
-// log emits exactly one record for the exchange.
+// log emits exactly one record for the exchange, and counts it. Both hang off the
+// same call so a request can never be audited without also being measured.
 func (e *Executor) log(rec *auditRecord, elapsed time.Duration) {
+	e.Metrics.Request(rec.Lane, rec.Decision, rec.Error, elapsed)
+
 	attrs := []slog.Attr{
 		slog.String("request_id", rec.RequestID),
 		slog.String("decision", rec.Decision),

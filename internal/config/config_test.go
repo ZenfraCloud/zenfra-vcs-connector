@@ -465,3 +465,78 @@ func TestConfigStringNamesTheCodeloadEndpoint(t *testing.T) {
 		t.Errorf("String() = %q, want it to name the codeload endpoint", cfg.String())
 	}
 }
+
+func TestLoadMetricsAddr(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		getenv  func(string) string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:   "disabled by default",
+			args:   validArgs(),
+			getenv: env(nil),
+			want:   "",
+		},
+		{
+			name:   "flag sets the listener",
+			args:   append(validArgs(), "--metrics-addr", "127.0.0.1:9101"),
+			getenv: env(nil),
+			want:   "127.0.0.1:9101",
+		},
+		{
+			name:   "environment fallback",
+			args:   validArgs(),
+			getenv: env(map[string]string{EnvMetricsAddr: ":9101"}),
+			want:   ":9101",
+		},
+		{
+			name:    "a non host:port address is terminal",
+			args:    append(validArgs(), "--metrics-addr", "9101"),
+			getenv:  env(nil),
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Load(tt.args, tt.getenv)
+			if tt.wantErr {
+				if !errors.Is(err, ErrInvalidConfig) {
+					t.Fatalf("Load() error = %v, want ErrInvalidConfig", err)
+				}
+				if !strings.Contains(err.Error(), "--metrics-addr") ||
+					!strings.Contains(err.Error(), EnvMetricsAddr) {
+					t.Fatalf("error must name both the flag and the env var: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.MetricsAddr != tt.want {
+				t.Fatalf("MetricsAddr = %q, want %q", cfg.MetricsAddr, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfigStringReportsMetricsState(t *testing.T) {
+	cfg, err := Load(validArgs(), env(nil))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !strings.Contains(cfg.String(), "metrics=disabled") {
+		t.Errorf("String() should say metrics are off: %s", cfg.String())
+	}
+
+	cfg, err = Load(append(validArgs(), "--metrics-addr", "127.0.0.1:9101"), env(nil))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !strings.Contains(cfg.String(), "metrics=127.0.0.1:9101") {
+		t.Errorf("String() should name the metrics listener: %s", cfg.String())
+	}
+}

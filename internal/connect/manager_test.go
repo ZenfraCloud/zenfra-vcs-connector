@@ -7,11 +7,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/metrics"
 )
 
 // stubPlane is a control plane serving registration, refresh and tunnel upgrades.
@@ -380,4 +383,53 @@ func TestManagerReMintsAfterTheGatewayRejectsTheToken(t *testing.T) {
 	}
 	registers, refreshes := p.counts()
 	t.Errorf("registers=%d refreshes=%d, want a re-mint after the 401", registers, refreshes)
+}
+
+func TestManagerCountsStreamsAndReconnects(t *testing.T) {
+	p := newStubPlane(t)
+	m := newTestManager(t, p, 1)
+	collector := metrics.New(time.Unix(0, 0))
+	m.Metrics = collector
+	run(t, m)
+
+	p.waitAccepted(t, 2)
+	waitForMetric(t, collector, "zenfra_vcs_connector_tunnel_streams 2")
+	waitForMetric(t, collector, "zenfra_vcs_connector_stream_connects_total 2")
+
+	p.mu.Lock()
+	first := p.conns[0]
+	p.mu.Unlock()
+	_ = first.Close()
+
+	// The lane comes back, so the connect counter climbs while the gauge returns
+	// to the full complement — that difference is the reconnect signal.
+	p.waitAccepted(t, 1)
+	waitForMetric(t, collector, "zenfra_vcs_connector_stream_connects_total 3")
+	waitForMetric(t, collector, "zenfra_vcs_connector_tunnel_streams 2")
+}
+
+// waitForMetric polls the collector's exposition until it contains want.
+func waitForMetric(t *testing.T, collector *metrics.Collector, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var body string
+	for time.Now().Before(deadline) {
+		rec := httptest.NewRecorder()
+		collector.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", http.NoBody))
+		body = rec.Body.String()
+		if strings.Contains(body, want) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %q in:\n%s", want, body)
+}
+
+func TestManagerWorksWithoutMetrics(t *testing.T) {
+	p := newStubPlane(t)
+	m := newTestManager(t, p, 1)
+	m.Metrics = nil
+	run(t, m)
+
+	p.waitAccepted(t, 2)
 }

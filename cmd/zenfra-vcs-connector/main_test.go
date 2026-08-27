@@ -5,16 +5,20 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/config"
+	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/metrics"
 )
 
 func noEnv(string) string { return "" }
@@ -121,5 +125,64 @@ func TestNewLoggerFallsBackOnUnknownLevel(t *testing.T) {
 	}
 	if !newLogger("debug").Enabled(context.Background(), slog.LevelDebug) {
 		t.Fatal("--log-level debug should enable debug")
+	}
+}
+
+func TestServeMetricsDisabledByDefault(t *testing.T) {
+	stop, err := serveMetrics("", metrics.New(time.Unix(0, 0)), newLogger("info"))
+	if err != nil {
+		t.Fatalf("serveMetrics: %v", err)
+	}
+	stop()
+}
+
+func TestServeMetricsServesTheEndpoint(t *testing.T) {
+	collector := metrics.New(time.Unix(0, 0))
+	collector.StreamOpened()
+
+	// Port 0: the OS picks a free port, so the test cannot collide with anything.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := listener.Addr().String()
+	if closeErr := listener.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+
+	stop, err := serveMetrics(addr, collector, newLogger("info"))
+	if err != nil {
+		t.Fatalf("serveMetrics: %v", err)
+	}
+	defer stop()
+
+	var body string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, getErr := http.Get("http://" + addr + "/metrics") //nolint:noctx // test scrape
+		if getErr != nil {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		data, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			t.Fatalf("read metrics: %v", readErr)
+		}
+		body = string(data)
+		break
+	}
+	if !strings.Contains(body, "zenfra_vcs_connector_tunnel_streams 1") {
+		t.Fatalf("metrics endpoint did not report the live stream:\n%s", body)
+	}
+}
+
+func TestServeMetricsUnusableAddressIsTerminal(t *testing.T) {
+	// Port 1 is privileged and the host is unroutable for a listener: either way
+	// the bind fails, and it must be reported as a configuration problem so the
+	// process exits instead of running without the endpoint it was asked for.
+	_, err := serveMetrics("203.0.113.1:1", metrics.New(time.Unix(0, 0)), newLogger("info"))
+	if !errors.Is(err, config.ErrInvalidConfig) {
+		t.Fatalf("want ErrInvalidConfig, got %v", err)
 	}
 }
