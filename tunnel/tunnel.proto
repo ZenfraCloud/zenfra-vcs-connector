@@ -1,0 +1,98 @@
+// ABOUTME: Tunnel protocol v1 for the VCS Connector — one Envelope per binary WS frame.
+// ABOUTME: Defines HTTPRequest/HTTPResponseHead/BodyChunk/Cancel/CancelAck/Error messages.
+syntax = "proto3";
+
+package zenfra.tunnel.v1;
+
+option go_package = "github.com/ZenfraCloud/zenfra-vcs-connector/tunnel";
+
+// Envelope is the single unit of transport: exactly one Envelope per binary
+// WebSocket frame. All frames of one exchange carry the same request_id.
+message Envelope {
+  string request_id = 1;
+  oneof msg {
+    HTTPRequest http_request = 2;
+    HTTPResponseHead http_response_head = 3;
+    BodyChunk body_chunk = 4;
+    Cancel cancel = 5;
+    CancelAck cancel_ack = 6;
+    Error error = 7;
+  }
+}
+
+// DeadlineClass selects the gateway/connector deadline profile for a request.
+enum DeadlineClass {
+  DEADLINE_CLASS_UNSPECIFIED = 0;
+  DEADLINE_CLASS_INTERACTIVE = 1;
+  DEADLINE_CLASS_BULK = 2;
+}
+
+// HeaderValues holds the ordered values of one HTTP header.
+message HeaderValues {
+  repeated string values = 1;
+}
+
+// HTTPRequest carries path only (no scheme/host); the connector prepends its
+// configured endpoint. Headers must already be allowlisted by the sender.
+message HTTPRequest {
+  string method = 1;
+  string path = 2;
+  string query = 3;
+  map<string, HeaderValues> headers = 4;
+  DeadlineClass deadline_class = 5;
+  // When true the request body follows as BodyChunk frames.
+  bool has_body = 6;
+}
+
+// HTTPResponseHead precedes the response body chunks.
+message HTTPResponseHead {
+  int32 status = 1;
+  map<string, HeaderValues> headers = 2;
+  // When true the response body follows as BodyChunk frames.
+  bool has_body = 3;
+}
+
+// BodyChunk streams a request or response body. Sequence starts at 0 and
+// increments by 1; data is capped at 64 KiB; terminal marks the last chunk.
+message BodyChunk {
+  uint64 sequence = 1;
+  bytes data = 2;
+  bool terminal = 3;
+}
+
+// Cancel asks the peer to abort the exchange identified by request_id.
+message Cancel {}
+
+// CancelOutcome is the true terminal state of a cancelled exchange.
+enum CancelOutcome {
+  CANCEL_OUTCOME_UNSPECIFIED = 0;
+  // The upstream request was never sent.
+  CANCEL_OUTCOME_NOT_SENT = 1;
+  // The upstream request completed before the cancel took effect.
+  CANCEL_OUTCOME_COMPLETED = 2;
+  // The upstream request was in flight; its effect is unknown.
+  CANCEL_OUTCOME_OUTCOME_UNKNOWN = 3;
+}
+
+// CancelAck answers a Cancel with the exchange's terminal state.
+message CancelAck {
+  CancelOutcome outcome = 1;
+}
+
+// ErrorOrigin identifies which hop produced an Error.
+enum ErrorOrigin {
+  ERROR_ORIGIN_UNSPECIFIED = 0;
+  ERROR_ORIGIN_GATEWAY = 1;
+  ERROR_ORIGIN_CONNECTOR = 2;
+  ERROR_ORIGIN_UPSTREAM = 3;
+}
+
+// Error terminates an exchange with a stable machine-readable code (see the
+// ErrCode* constants in this package), an explicit retryability signal, and
+// the originating hop.
+message Error {
+  string code = 1;
+  string message = 2;
+  bool retryable = 3;
+  ErrorOrigin origin = 4;
+}

@@ -1,0 +1,14 @@
+# ABOUTME: buf module config for the VCS Connector tunnel protocol.
+# ABOUTME: Run `make proto-gen` from the repo root to regenerate Go code.
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - STANDARD
+  except:
+    - PACKAGE_VERSION_SUFFIX
+    - PACKAGE_DIRECTORY_MATCH
+breaking:
+  use:
+    - WIRE_JSON

@@ -1,0 +1,7 @@
+# ABOUTME: buf codegen config — generates Go protobuf code next to tunnel.proto.
+# ABOUTME: Requires protoc-gen-go on PATH; `make proto-gen` installs it.
+version: v2
+plugins:
+  - local: protoc-gen-go
+    out: .
+    opt: paths=source_relative
