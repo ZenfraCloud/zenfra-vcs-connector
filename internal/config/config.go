@@ -34,6 +34,7 @@ const (
 	EnvAllProjects            = "ZENFRA_VCS_CONNECTOR_ALL_PROJECTS"
 	EnvInstanceKey            = "ZENFRA_VCS_CONNECTOR_INSTANCE_KEY"
 	EnvCABundle               = "ZENFRA_VCS_CONNECTOR_CA_BUNDLE"
+	EnvUpstreamCABundle       = "ZENFRA_VCS_CONNECTOR_UPSTREAM_CA_BUNDLE"
 	EnvInteractiveConnections = "ZENFRA_VCS_CONNECTOR_INTERACTIVE_CONNECTIONS"
 	EnvLogLevel               = "ZENFRA_VCS_CONNECTOR_LOG_LEVEL"
 )
@@ -50,6 +51,11 @@ type Config struct {
 	BootstrapToken string
 	// CABundle optionally pins the trust roots for the gateway leg.
 	CABundle string
+	// UpstreamCABundle optionally pins the trust roots for the VCS leg. Private
+	// VCS is usually signed by an internal CA the system roots do not carry;
+	// without this the only alternatives would be skipping verification (never)
+	// or reissuing the certificate.
+	UpstreamCABundle string
 	// InstanceKey is this process's stable self-identifier, defaulting to the hostname.
 	InstanceKey string
 
@@ -76,9 +82,10 @@ func (c *Config) String() string {
 		scope = fmt.Sprintf("projects=%s", strings.Join(c.AllowedProjects, ","))
 	}
 	return fmt.Sprintf(
-		"gateway=%s vendor=%s endpoint=%s instance=%s %s interactive=%d secret-file=%s ca-bundle=%s",
+		"gateway=%s vendor=%s endpoint=%s instance=%s %s interactive=%d secret-file=%s "+
+			"ca-bundle=%s upstream-ca-bundle=%s",
 		c.GatewayURL, c.Vendor, c.Endpoint, c.InstanceKey, scope,
-		c.InteractiveConnections, c.SecretFile, c.CABundle,
+		c.InteractiveConnections, c.SecretFile, c.CABundle, c.UpstreamCABundle,
 	)
 }
 
@@ -113,6 +120,8 @@ func Load(args []string, getenv func(string) string) (*Config, error) {
 		"stable identifier for this instance (default: hostname)")
 	fs.StringVar(&cfg.CABundle, "ca-bundle", getenv(EnvCABundle),
 		"PEM bundle of trust roots for the gateway connection (default: system roots)")
+	fs.StringVar(&cfg.UpstreamCABundle, "upstream-ca-bundle", getenv(EnvUpstreamCABundle),
+		"PEM bundle of trust roots for the upstream VCS (default: system roots)")
 	fs.IntVar(&cfg.InteractiveConnections, "interactive-connections",
 		intFromEnv(getenv(EnvInteractiveConnections), DefaultInteractiveConnections),
 		"number of interactive tunnel streams to maintain")

@@ -117,6 +117,15 @@ func New(cfg *config.Config, engine *policy.Engine, audit *slog.Logger) (*Execut
 	transport := baseTransport.Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	transport.ForceAttemptHTTP2 = true
+	if cfg.UpstreamCABundle != "" {
+		// Fail at startup, not per request: a bundle the operator cannot read is
+		// a flag problem, and every tunneled request would fail identically.
+		tlsCfg, err := connect.TLSConfigFromCABundle(cfg.UpstreamCABundle)
+		if err != nil {
+			return nil, fmt.Errorf("executor: upstream CA bundle: %w", err)
+		}
+		transport.TLSClientConfig = tlsCfg
+	}
 
 	return &Executor{
 		endpoint:   strings.TrimSuffix(cfg.Endpoint, "/"),

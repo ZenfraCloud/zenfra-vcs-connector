@@ -83,14 +83,15 @@ func TestLoadTrimsEndpointTrailingSlash(t *testing.T) {
 
 func TestLoadReadsEnvironment(t *testing.T) {
 	cfg, err := Load(nil, env(map[string]string{
-		EnvGatewayURL:      "https://api.zenfra.cloud",
-		EnvBootstrapToken:  "vcsc_abc.def",
-		EnvEndpoint:        "https://gitlab.internal",
-		EnvVendor:          "gitlab",
-		EnvSecretFile:      "/run/secrets/token",
-		EnvAllowedProjects: "42, eng/platform ,,",
-		EnvInstanceKey:     "connector-0",
-		EnvCABundle:        "/etc/ssl/corp.pem",
+		EnvGatewayURL:       "https://api.zenfra.cloud",
+		EnvBootstrapToken:   "vcsc_abc.def",
+		EnvEndpoint:         "https://gitlab.internal",
+		EnvVendor:           "gitlab",
+		EnvSecretFile:       "/run/secrets/token",
+		EnvAllowedProjects:  "42, eng/platform ,,",
+		EnvInstanceKey:      "connector-0",
+		EnvCABundle:         "/etc/ssl/corp.pem",
+		EnvUpstreamCABundle: "/etc/ssl/internal-ca.pem",
 	}))
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -103,6 +104,10 @@ func TestLoadReadsEnvironment(t *testing.T) {
 	}
 	if cfg.CABundle != "/etc/ssl/corp.pem" {
 		t.Errorf("CABundle = %q", cfg.CABundle)
+	}
+	// The two legs carry separate trust: the gateway is public, the VCS is not.
+	if cfg.UpstreamCABundle != "/etc/ssl/internal-ca.pem" {
+		t.Errorf("UpstreamCABundle = %q", cfg.UpstreamCABundle)
 	}
 	if got, want := cfg.AllowedProjects, []string{"42", "eng/platform"}; !equalStrings(got, want) {
 		t.Errorf("AllowedProjects = %v, want %v (blank entries dropped)", got, want)

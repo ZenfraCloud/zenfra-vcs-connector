@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"log/slog"
 	"net/http"
@@ -731,4 +732,110 @@ func TestAudit_NeverContainsAuthMaterial(t *testing.T) {
 	if n := len(auditLines(t, logged)); n != 3 {
 		t.Errorf("got %d audit records, want 3", n)
 	}
+}
+
+// newExecutorWithArgs builds an executor with extra flags appended.
+func newExecutorWithArgs(t *testing.T, endpoint, secretPath string, extra ...string) *Executor {
+	t.Helper()
+	args := append([]string{
+		"--gateway-url", "https://api.zenfra.cloud",
+		"--bootstrap-token", "vcsc_abc.def",
+		"--endpoint", endpoint,
+		"--vendor", "gitlab",
+		"--secret-file", secretPath,
+		"--instance-key", "connector-0",
+		"--all-projects",
+	}, extra...)
+	cfg, err := config.Load(args, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	engine, err := policy.NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("policy.NewEngine() error = %v", err)
+	}
+	exec, err := New(cfg, engine, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	return exec
+}
+
+// writeCertPEM writes a server certificate out as a PEM trust bundle.
+func writeCertPEM(t *testing.T, cert *x509.Certificate) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "upstream-ca.pem")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestHandle_UpstreamCABundle covers the common private-VCS deployment: the
+// customer's GitLab is signed by an internal CA the system roots know nothing
+// about. Without the bundle the handshake must fail (no silent skip-verify);
+// with it the same request must succeed.
+func TestHandle_UpstreamCABundle(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"username":"svc"}`))
+	}))
+	defer srv.Close()
+	secret := newSecretFile(t, testSecret)
+
+	t.Run("untrusted issuer is refused", func(t *testing.T) {
+		w := newFakeResponder()
+		newExecutorWithArgs(t, srv.URL, secret).
+			Handle(context.Background(), req(http.MethodGet, "/api/v4/user", ""), w)
+
+		got := w.snapshot()
+		if got.failure == nil {
+			t.Fatal("an unknown issuer was accepted without a trust bundle")
+		}
+		if got.failure.Code != tunnel.ErrCodeUpstreamTLS {
+			t.Errorf("error code = %q, want %q", got.failure.Code, tunnel.ErrCodeUpstreamTLS)
+		}
+	})
+
+	t.Run("bundled issuer is trusted", func(t *testing.T) {
+		w := newFakeResponder()
+		newExecutorWithArgs(t, srv.URL, secret,
+			"--upstream-ca-bundle", writeCertPEM(t, srv.Certificate())).
+			Handle(context.Background(), req(http.MethodGet, "/api/v4/user", ""), w)
+
+		got := w.snapshot()
+		if got.failure != nil {
+			t.Fatalf("bundled CA still failed: %+v", got.failure)
+		}
+		if got.status != http.StatusOK {
+			t.Errorf("status = %d, want 200", got.status)
+		}
+		if body := w.bodyString(); !strings.Contains(body, "svc") {
+			t.Errorf("body = %q, want the upstream reply", body)
+		}
+	})
+
+	t.Run("unreadable bundle is a terminal misconfiguration", func(t *testing.T) {
+		cfg, err := config.Load([]string{
+			"--gateway-url", "https://api.zenfra.cloud",
+			"--bootstrap-token", "vcsc_abc.def",
+			"--endpoint", srv.URL,
+			"--vendor", "gitlab",
+			"--secret-file", secret,
+			"--instance-key", "connector-0",
+			"--all-projects",
+			"--upstream-ca-bundle", filepath.Join(t.TempDir(), "missing.pem"),
+		}, func(string) string { return "" })
+		if err != nil {
+			t.Fatalf("config.Load() error = %v", err)
+		}
+		engine, err := policy.NewEngine(cfg)
+		if err != nil {
+			t.Fatalf("policy.NewEngine() error = %v", err)
+		}
+		if _, err := New(cfg, engine, nil); err == nil {
+			t.Fatal("a missing CA bundle must fail at startup, not per request")
+		}
+	})
 }

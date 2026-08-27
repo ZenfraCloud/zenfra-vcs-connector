@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -94,5 +95,31 @@ func TestRunRegistersThenStopsOnContextCancel(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("run did not stop after context cancel")
+	}
+}
+
+// TestServeExitsMisconfigured pins the exit-code contract an orchestrator's
+// restart policy keys off: 2 means "fix your flags", not "try again".
+func TestServeExitsMisconfigured(t *testing.T) {
+	saved := os.Args
+	defer func() { os.Args = saved }()
+	os.Args = []string{"zenfra-vcs-connector", "--gateway-url", "http://gw"}
+
+	if code := serve(); code != exitMisconfigured {
+		t.Fatalf("want exit %d for a misconfiguration, got %d", exitMisconfigured, code)
+	}
+}
+
+func TestNewLoggerFallsBackOnUnknownLevel(t *testing.T) {
+	// An unparseable level must not be fatal — the connector logs at info and
+	// keeps serving rather than refusing to start over a typo.
+	if !newLogger("nonsense").Enabled(context.Background(), slog.LevelInfo) {
+		t.Fatal("unknown log level should fall back to info")
+	}
+	if newLogger("nonsense").Enabled(context.Background(), slog.LevelDebug) {
+		t.Fatal("fallback should not enable debug")
+	}
+	if !newLogger("debug").Enabled(context.Background(), slog.LevelDebug) {
+		t.Fatal("--log-level debug should enable debug")
 	}
 }
