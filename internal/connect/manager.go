@@ -13,6 +13,7 @@ import (
 
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/config"
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/metrics"
+	"github.com/ZenfraCloud/zenfra-vcs-connector/tunnel"
 )
 
 // Reconnect and token-lifecycle bounds.
@@ -54,6 +55,44 @@ type Manager struct {
 
 	// Metrics is the optional Prometheus collector; nil disables it.
 	Metrics *metrics.Collector
+
+	// mu guards live, the interactive connections an event may ride out on.
+	mu   sync.Mutex
+	live []*Conn
+}
+
+// SendEvent relays one event to the gateway over any live interactive
+// connection. ponytail: first live connection wins — events are rare next to
+// requests, so spreading them across streams would buy nothing.
+func (m *Manager) SendEvent(ctx context.Context, event *tunnel.Event) (*tunnel.EventAck, error) {
+	m.mu.Lock()
+	var conn *Conn
+	if len(m.live) > 0 {
+		conn = m.live[0]
+	}
+	m.mu.Unlock()
+	if conn == nil {
+		return nil, ErrNoTunnel
+	}
+	return conn.SendEvent(ctx, event)
+}
+
+// track registers a live interactive connection for the event relay and returns
+// its removal.
+func (m *Manager) track(conn *Conn) func() {
+	m.mu.Lock()
+	m.live = append(m.live, conn)
+	m.mu.Unlock()
+	return func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		for i, candidate := range m.live {
+			if candidate == conn {
+				m.live = append(m.live[:i], m.live[i+1:]...)
+				return
+			}
+		}
+	}
 }
 
 // NewManager wires a manager for one connector instance.
@@ -174,6 +213,11 @@ func (m *Manager) connectOnce(ctx context.Context, lane Lane) (bool, error) {
 
 	m.Metrics.StreamOpened()
 	defer m.Metrics.StreamClosed()
+	if lane == LaneInteractive {
+		// Events ride the interactive lane; the bulk lane is reserved for
+		// archive transfers that would sit in front of them.
+		defer m.track(conn)()
+	}
 	return true, conn.Serve(ctx)
 }
 

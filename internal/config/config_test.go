@@ -598,3 +598,89 @@ func TestConfigStringReportsEnrollmentState(t *testing.T) {
 		t.Errorf("String() = %q, want the configured key path", cfg.String())
 	}
 }
+
+func TestLoadWebhookAddr(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		getenv  func(string) string
+		want    string
+		wantErr string
+	}{
+		{
+			name:   "disabled by default",
+			args:   validArgs(),
+			getenv: env(nil),
+			want:   "",
+		},
+		{
+			name:   "flag sets the listener",
+			args:   append(validArgs(), "--webhook-addr", "0.0.0.0:9000", "--webhook-secret-file", "/secrets/hook"),
+			getenv: env(nil),
+			want:   "0.0.0.0:9000",
+		},
+		{
+			name: "environment fallback",
+			args: validArgs(),
+			getenv: env(map[string]string{
+				EnvWebhookAddr:       ":9000",
+				EnvWebhookSecretFile: "/secrets/hook",
+			}),
+			want: ":9000",
+		},
+		{
+			name:    "a non host:port address is terminal",
+			args:    append(validArgs(), "--webhook-addr", "9000", "--webhook-secret-file", "/secrets/hook"),
+			getenv:  env(nil),
+			wantErr: "--webhook-addr",
+		},
+		{
+			name:    "a listener without a secret is terminal",
+			args:    append(validArgs(), "--webhook-addr", "0.0.0.0:9000"),
+			getenv:  env(nil),
+			wantErr: "--webhook-secret-file",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Load(tt.args, tt.getenv)
+			if tt.wantErr != "" {
+				if !errors.Is(err, ErrInvalidConfig) {
+					t.Fatalf("Load() error = %v, want ErrInvalidConfig", err)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error must name %s: %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.WebhookAddr != tt.want {
+				t.Fatalf("WebhookAddr = %q, want %q", cfg.WebhookAddr, tt.want)
+			}
+		})
+	}
+}
+
+// The secret file path must never be echoed alongside a listener that is off,
+// and an enabled listener must be visible in the startup line.
+func TestConfigStringReportsWebhookState(t *testing.T) {
+	off, err := Load(validArgs(), env(nil))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !strings.Contains(off.String(), "webhook=disabled") {
+		t.Errorf("String() = %q, want webhook=disabled", off.String())
+	}
+
+	on, err := Load(append(validArgs(),
+		"--webhook-addr", "0.0.0.0:9000", "--webhook-secret-file", "/secrets/hook"), env(nil))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !strings.Contains(on.String(), "webhook=0.0.0.0:9000") {
+		t.Errorf("String() = %q, want the webhook address", on.String())
+	}
+}

@@ -15,6 +15,10 @@ const (
 	MaxChunkBytes = 64 * 1024
 	// DefaultChunkBytes is the recommended chunk size for senders.
 	DefaultChunkBytes = 32 * 1024
+	// MaxEventBytes caps an Event payload. Vendors bound their own webhook
+	// bodies well below this (GitLab ships at most 20 commits per push), and an
+	// Event is a single frame — it has no chunked form to grow into.
+	MaxEventBytes = 64 * 1024
 )
 
 // HeaderPolicyRule carries the connector allowlist rule that authorized a request
@@ -49,6 +53,8 @@ var (
 	ErrChunkAfterTerminal = errors.New("tunnel: chunk after terminal marker")
 	ErrRequestIDMismatch  = errors.New("tunnel: request id changed mid-exchange")
 	ErrDuplicateRequestID = errors.New("tunnel: duplicate request id")
+	ErrEventTooLarge      = fmt.Errorf("tunnel: event payload exceeds %d bytes", MaxEventBytes)
+	ErrEventIncomplete    = errors.New("tunnel: event missing vendor, event type or delivery id")
 )
 
 func validate(env *Envelope) error {
@@ -60,6 +66,22 @@ func validate(env *Envelope) error {
 	}
 	if chunk := env.GetBodyChunk(); chunk != nil && len(chunk.GetData()) > MaxChunkBytes {
 		return fmt.Errorf("%w: got %d", ErrChunkTooLarge, len(chunk.GetData()))
+	}
+	if event := env.GetEvent(); event != nil {
+		return validateEvent(event)
+	}
+	return nil
+}
+
+// validateEvent rejects an event the receiver could not route or dedupe. Both
+// checks are on the wire so a malformed relay dies at the frame rather than
+// halfway through run creation.
+func validateEvent(event *Event) error {
+	if event.GetVendor() == "" || event.GetEventType() == "" || event.GetDeliveryId() == "" {
+		return ErrEventIncomplete
+	}
+	if len(event.GetPayload()) > MaxEventBytes {
+		return fmt.Errorf("%w: got %d", ErrEventTooLarge, len(event.GetPayload()))
 	}
 	return nil
 }

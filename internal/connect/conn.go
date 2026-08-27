@@ -15,6 +15,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -231,6 +232,13 @@ type Conn struct {
 	closed    chan struct{}
 	closeOnce sync.Once
 
+	// eventsMu guards the acks owed to in-flight connector-originated events.
+	// Separate from mu: events run alongside the single request exchange, not
+	// inside it.
+	eventsMu sync.Mutex
+	events   map[string]chan *tunnel.EventAck
+	eventSeq atomic.Uint64
+
 	mu sync.Mutex
 	// current is the in-flight exchange, nil between requests.
 	current *inflight
@@ -325,9 +333,10 @@ func (c *Conn) Serve(ctx context.Context) error {
 
 // dispatch routes one inbound envelope. A returned error ends the connection.
 func (c *Conn) dispatch(ctx context.Context, env *tunnel.Envelope) error {
-	// The gateway never sends responses or acks; a connector that accepted them
-	// would be talking to something other than the gateway.
-	if env.GetHttpResponseHead() != nil || env.GetCancelAck() != nil || env.GetError() != nil {
+	// The gateway never sends responses, acks or events; a connector that
+	// accepted them would be talking to something other than the gateway.
+	if env.GetHttpResponseHead() != nil || env.GetCancelAck() != nil ||
+		env.GetError() != nil || env.GetEvent() != nil {
 		return fmt.Errorf("%w: gateway sent a connector-role message", ErrProtocol)
 	}
 	switch {
@@ -337,6 +346,8 @@ func (c *Conn) dispatch(ctx context.Context, env *tunnel.Envelope) error {
 		return c.deliverChunk(env)
 	case env.GetCancel() != nil:
 		return c.deliverCancel(env.GetRequestId())
+	case env.GetEventAck() != nil:
+		return c.deliverEventAck(env)
 	}
 	return fmt.Errorf("%w: envelope carried no known message", ErrProtocol)
 }

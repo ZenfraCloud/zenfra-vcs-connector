@@ -196,6 +196,8 @@ type Envelope struct {
 	//	*Envelope_Cancel
 	//	*Envelope_CancelAck
 	//	*Envelope_Error
+	//	*Envelope_Event
+	//	*Envelope_EventAck
 	Msg           isEnvelope_Msg `protobuf_oneof:"msg"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -299,6 +301,24 @@ func (x *Envelope) GetError() *Error {
 	return nil
 }
 
+func (x *Envelope) GetEvent() *Event {
+	if x != nil {
+		if x, ok := x.Msg.(*Envelope_Event); ok {
+			return x.Event
+		}
+	}
+	return nil
+}
+
+func (x *Envelope) GetEventAck() *EventAck {
+	if x != nil {
+		if x, ok := x.Msg.(*Envelope_EventAck); ok {
+			return x.EventAck
+		}
+	}
+	return nil
+}
+
 type isEnvelope_Msg interface {
 	isEnvelope_Msg()
 }
@@ -327,6 +347,14 @@ type Envelope_Error struct {
 	Error *Error `protobuf:"bytes,7,opt,name=error,proto3,oneof"`
 }
 
+type Envelope_Event struct {
+	Event *Event `protobuf:"bytes,8,opt,name=event,proto3,oneof"`
+}
+
+type Envelope_EventAck struct {
+	EventAck *EventAck `protobuf:"bytes,9,opt,name=event_ack,json=eventAck,proto3,oneof"`
+}
+
 func (*Envelope_HttpRequest) isEnvelope_Msg() {}
 
 func (*Envelope_HttpResponseHead) isEnvelope_Msg() {}
@@ -339,6 +367,147 @@ func (*Envelope_CancelAck) isEnvelope_Msg() {}
 
 func (*Envelope_Error) isEnvelope_Msg() {}
 
+func (*Envelope_Event) isEnvelope_Msg() {}
+
+func (*Envelope_EventAck) isEnvelope_Msg() {}
+
+// Event carries a vendor webhook the connector received inside the customer's
+// network. It is the only exchange a connector initiates, and the gateway
+// answers it with exactly one EventAck carrying the same request_id.
+type Event struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Vendor and event_type name the payload's shape, e.g. "gitlab" / "push".
+	Vendor    string `protobuf:"bytes,1,opt,name=vendor,proto3" json:"vendor,omitempty"`
+	EventType string `protobuf:"bytes,2,opt,name=event_type,json=eventType,proto3" json:"event_type,omitempty"`
+	// delivery_id is the vendor's own delivery identifier, carried unchanged
+	// across a redelivery or a connector-side retry. It is what makes the relay
+	// replay-safe: the control plane collapses a repeat instead of acting twice.
+	DeliveryId string `protobuf:"bytes,3,opt,name=delivery_id,json=deliveryId,proto3" json:"delivery_id,omitempty"`
+	// payload is the verbatim webhook body, capped at MaxEventBytes.
+	Payload       []byte `protobuf:"bytes,4,opt,name=payload,proto3" json:"payload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Event) Reset() {
+	*x = Event{}
+	mi := &file_tunnel_tunnel_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Event) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Event) ProtoMessage() {}
+
+func (x *Event) ProtoReflect() protoreflect.Message {
+	mi := &file_tunnel_tunnel_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Event.ProtoReflect.Descriptor instead.
+func (*Event) Descriptor() ([]byte, []int) {
+	return file_tunnel_tunnel_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *Event) GetVendor() string {
+	if x != nil {
+		return x.Vendor
+	}
+	return ""
+}
+
+func (x *Event) GetEventType() string {
+	if x != nil {
+		return x.EventType
+	}
+	return ""
+}
+
+func (x *Event) GetDeliveryId() string {
+	if x != nil {
+		return x.DeliveryId
+	}
+	return ""
+}
+
+func (x *Event) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+// EventAck settles one Event. accepted=false carries a stable ErrCode* in code.
+type EventAck struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Accepted      bool                   `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	Code          string                 `protobuf:"bytes,2,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EventAck) Reset() {
+	*x = EventAck{}
+	mi := &file_tunnel_tunnel_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EventAck) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EventAck) ProtoMessage() {}
+
+func (x *EventAck) ProtoReflect() protoreflect.Message {
+	mi := &file_tunnel_tunnel_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EventAck.ProtoReflect.Descriptor instead.
+func (*EventAck) Descriptor() ([]byte, []int) {
+	return file_tunnel_tunnel_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *EventAck) GetAccepted() bool {
+	if x != nil {
+		return x.Accepted
+	}
+	return false
+}
+
+func (x *EventAck) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *EventAck) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 // HeaderValues holds the ordered values of one HTTP header.
 type HeaderValues struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -349,7 +518,7 @@ type HeaderValues struct {
 
 func (x *HeaderValues) Reset() {
 	*x = HeaderValues{}
-	mi := &file_tunnel_tunnel_proto_msgTypes[1]
+	mi := &file_tunnel_tunnel_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -361,7 +530,7 @@ func (x *HeaderValues) String() string {
 func (*HeaderValues) ProtoMessage() {}
 
 func (x *HeaderValues) ProtoReflect() protoreflect.Message {
-	mi := &file_tunnel_tunnel_proto_msgTypes[1]
+	mi := &file_tunnel_tunnel_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -374,7 +543,7 @@ func (x *HeaderValues) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeaderValues.ProtoReflect.Descriptor instead.
 func (*HeaderValues) Descriptor() ([]byte, []int) {
-	return file_tunnel_tunnel_proto_rawDescGZIP(), []int{1}
+	return file_tunnel_tunnel_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *HeaderValues) GetValues() []string {
@@ -401,7 +570,7 @@ type HTTPRequest struct {
 
 func (x *HTTPRequest) Reset() {
 	*x = HTTPRequest{}
-	mi := &file_tunnel_tunnel_proto_msgTypes[2]
+	mi := &file_tunnel_tunnel_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -413,7 +582,7 @@ func (x *HTTPRequest) String() string {
 func (*HTTPRequest) ProtoMessage() {}
 
 func (x *HTTPRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_tunnel_tunnel_proto_msgTypes[2]
+	mi := &file_tunnel_tunnel_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -426,7 +595,7 @@ func (x *HTTPRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HTTPRequest.ProtoReflect.Descriptor instead.
 func (*HTTPRequest) Descriptor() ([]byte, []int) {
-	return file_tunnel_tunnel_proto_rawDescGZIP(), []int{2}
+	return file_tunnel_tunnel_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *HTTPRequest) GetMethod() string {
@@ -484,7 +653,7 @@ type HTTPResponseHead struct {
 
 func (x *HTTPResponseHead) Reset() {
 	*x = HTTPResponseHead{}
-	mi := &file_tunnel_tunnel_proto_msgTypes[3]
+	mi := &file_tunnel_tunnel_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -496,7 +665,7 @@ func (x *HTTPResponseHead) String() string {
 func (*HTTPResponseHead) ProtoMessage() {}
 
 func (x *HTTPResponseHead) ProtoReflect() protoreflect.Message {
-	mi := &file_tunnel_tunnel_proto_msgTypes[3]
+	mi := &file_tunnel_tunnel_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -509,7 +678,7 @@ func (x *HTTPResponseHead) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HTTPResponseHead.ProtoReflect.Descriptor instead.
 func (*HTTPResponseHead) Descriptor() ([]byte, []int) {
-	return file_tunnel_tunnel_proto_rawDescGZIP(), []int{3}
+	return file_tunnel_tunnel_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *HTTPResponseHead) GetStatus() int32 {
@@ -546,7 +715,7 @@ type BodyChunk struct {
 
 func (x *BodyChunk) Reset() {
 	*x = BodyChunk{}
-	mi := &file_tunnel_tunnel_proto_msgTypes[4]
+	mi := &file_tunnel_tunnel_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -558,7 +727,7 @@ func (x *BodyChunk) String() string {
 func (*BodyChunk) ProtoMessage() {}
 
 func (x *BodyChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_tunnel_tunnel_proto_msgTypes[4]
+	mi := &file_tunnel_tunnel_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -571,7 +740,7 @@ func (x *BodyChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BodyChunk.ProtoReflect.Descriptor instead.
 func (*BodyChunk) Descriptor() ([]byte, []int) {
-	return file_tunnel_tunnel_proto_rawDescGZIP(), []int{4}
+	return file_tunnel_tunnel_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *BodyChunk) GetSequence() uint64 {
@@ -604,7 +773,7 @@ type Cancel struct {
 
 func (x *Cancel) Reset() {
 	*x = Cancel{}
-	mi := &file_tunnel_tunnel_proto_msgTypes[5]
+	mi := &file_tunnel_tunnel_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -616,7 +785,7 @@ func (x *Cancel) String() string {
 func (*Cancel) ProtoMessage() {}
 
 func (x *Cancel) ProtoReflect() protoreflect.Message {
-	mi := &file_tunnel_tunnel_proto_msgTypes[5]
+	mi := &file_tunnel_tunnel_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -629,7 +798,7 @@ func (x *Cancel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Cancel.ProtoReflect.Descriptor instead.
 func (*Cancel) Descriptor() ([]byte, []int) {
-	return file_tunnel_tunnel_proto_rawDescGZIP(), []int{5}
+	return file_tunnel_tunnel_proto_rawDescGZIP(), []int{7}
 }
 
 // CancelAck answers a Cancel with the exchange's terminal state.
@@ -642,7 +811,7 @@ type CancelAck struct {
 
 func (x *CancelAck) Reset() {
 	*x = CancelAck{}
-	mi := &file_tunnel_tunnel_proto_msgTypes[6]
+	mi := &file_tunnel_tunnel_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -654,7 +823,7 @@ func (x *CancelAck) String() string {
 func (*CancelAck) ProtoMessage() {}
 
 func (x *CancelAck) ProtoReflect() protoreflect.Message {
-	mi := &file_tunnel_tunnel_proto_msgTypes[6]
+	mi := &file_tunnel_tunnel_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -667,7 +836,7 @@ func (x *CancelAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelAck.ProtoReflect.Descriptor instead.
 func (*CancelAck) Descriptor() ([]byte, []int) {
-	return file_tunnel_tunnel_proto_rawDescGZIP(), []int{6}
+	return file_tunnel_tunnel_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *CancelAck) GetOutcome() CancelOutcome {
@@ -692,7 +861,7 @@ type Error struct {
 
 func (x *Error) Reset() {
 	*x = Error{}
-	mi := &file_tunnel_tunnel_proto_msgTypes[7]
+	mi := &file_tunnel_tunnel_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -704,7 +873,7 @@ func (x *Error) String() string {
 func (*Error) ProtoMessage() {}
 
 func (x *Error) ProtoReflect() protoreflect.Message {
-	mi := &file_tunnel_tunnel_proto_msgTypes[7]
+	mi := &file_tunnel_tunnel_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -717,7 +886,7 @@ func (x *Error) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Error.ProtoReflect.Descriptor instead.
 func (*Error) Descriptor() ([]byte, []int) {
-	return file_tunnel_tunnel_proto_rawDescGZIP(), []int{7}
+	return file_tunnel_tunnel_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Error) GetCode() string {
@@ -752,7 +921,7 @@ var File_tunnel_tunnel_proto protoreflect.FileDescriptor
 
 const file_tunnel_tunnel_proto_rawDesc = "" +
 	"\n" +
-	"\x13tunnel/tunnel.proto\x12\x10zenfra.tunnel.v1\"\xa9\x03\n" +
+	"\x13tunnel/tunnel.proto\x12\x10zenfra.tunnel.v1\"\x95\x04\n" +
 	"\bEnvelope\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12B\n" +
@@ -763,8 +932,21 @@ const file_tunnel_tunnel_proto_rawDesc = "" +
 	"\x06cancel\x18\x05 \x01(\v2\x18.zenfra.tunnel.v1.CancelH\x00R\x06cancel\x12<\n" +
 	"\n" +
 	"cancel_ack\x18\x06 \x01(\v2\x1b.zenfra.tunnel.v1.CancelAckH\x00R\tcancelAck\x12/\n" +
-	"\x05error\x18\a \x01(\v2\x17.zenfra.tunnel.v1.ErrorH\x00R\x05errorB\x05\n" +
-	"\x03msg\"&\n" +
+	"\x05error\x18\a \x01(\v2\x17.zenfra.tunnel.v1.ErrorH\x00R\x05error\x12/\n" +
+	"\x05event\x18\b \x01(\v2\x17.zenfra.tunnel.v1.EventH\x00R\x05event\x129\n" +
+	"\tevent_ack\x18\t \x01(\v2\x1a.zenfra.tunnel.v1.EventAckH\x00R\beventAckB\x05\n" +
+	"\x03msg\"y\n" +
+	"\x05Event\x12\x16\n" +
+	"\x06vendor\x18\x01 \x01(\tR\x06vendor\x12\x1d\n" +
+	"\n" +
+	"event_type\x18\x02 \x01(\tR\teventType\x12\x1f\n" +
+	"\vdelivery_id\x18\x03 \x01(\tR\n" +
+	"deliveryId\x12\x18\n" +
+	"\apayload\x18\x04 \x01(\fR\apayload\"T\n" +
+	"\bEventAck\x12\x1a\n" +
+	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x12\n" +
+	"\x04code\x18\x02 \x01(\tR\x04code\x12\x18\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\"&\n" +
 	"\fHeaderValues\x12\x16\n" +
 	"\x06values\x18\x01 \x03(\tR\x06values\"\xd4\x02\n" +
 	"\vHTTPRequest\x12\x16\n" +
@@ -824,41 +1006,45 @@ func file_tunnel_tunnel_proto_rawDescGZIP() []byte {
 }
 
 var file_tunnel_tunnel_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_tunnel_tunnel_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_tunnel_tunnel_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_tunnel_tunnel_proto_goTypes = []any{
 	(DeadlineClass)(0),       // 0: zenfra.tunnel.v1.DeadlineClass
 	(CancelOutcome)(0),       // 1: zenfra.tunnel.v1.CancelOutcome
 	(ErrorOrigin)(0),         // 2: zenfra.tunnel.v1.ErrorOrigin
 	(*Envelope)(nil),         // 3: zenfra.tunnel.v1.Envelope
-	(*HeaderValues)(nil),     // 4: zenfra.tunnel.v1.HeaderValues
-	(*HTTPRequest)(nil),      // 5: zenfra.tunnel.v1.HTTPRequest
-	(*HTTPResponseHead)(nil), // 6: zenfra.tunnel.v1.HTTPResponseHead
-	(*BodyChunk)(nil),        // 7: zenfra.tunnel.v1.BodyChunk
-	(*Cancel)(nil),           // 8: zenfra.tunnel.v1.Cancel
-	(*CancelAck)(nil),        // 9: zenfra.tunnel.v1.CancelAck
-	(*Error)(nil),            // 10: zenfra.tunnel.v1.Error
-	nil,                      // 11: zenfra.tunnel.v1.HTTPRequest.HeadersEntry
-	nil,                      // 12: zenfra.tunnel.v1.HTTPResponseHead.HeadersEntry
+	(*Event)(nil),            // 4: zenfra.tunnel.v1.Event
+	(*EventAck)(nil),         // 5: zenfra.tunnel.v1.EventAck
+	(*HeaderValues)(nil),     // 6: zenfra.tunnel.v1.HeaderValues
+	(*HTTPRequest)(nil),      // 7: zenfra.tunnel.v1.HTTPRequest
+	(*HTTPResponseHead)(nil), // 8: zenfra.tunnel.v1.HTTPResponseHead
+	(*BodyChunk)(nil),        // 9: zenfra.tunnel.v1.BodyChunk
+	(*Cancel)(nil),           // 10: zenfra.tunnel.v1.Cancel
+	(*CancelAck)(nil),        // 11: zenfra.tunnel.v1.CancelAck
+	(*Error)(nil),            // 12: zenfra.tunnel.v1.Error
+	nil,                      // 13: zenfra.tunnel.v1.HTTPRequest.HeadersEntry
+	nil,                      // 14: zenfra.tunnel.v1.HTTPResponseHead.HeadersEntry
 }
 var file_tunnel_tunnel_proto_depIdxs = []int32{
-	5,  // 0: zenfra.tunnel.v1.Envelope.http_request:type_name -> zenfra.tunnel.v1.HTTPRequest
-	6,  // 1: zenfra.tunnel.v1.Envelope.http_response_head:type_name -> zenfra.tunnel.v1.HTTPResponseHead
-	7,  // 2: zenfra.tunnel.v1.Envelope.body_chunk:type_name -> zenfra.tunnel.v1.BodyChunk
-	8,  // 3: zenfra.tunnel.v1.Envelope.cancel:type_name -> zenfra.tunnel.v1.Cancel
-	9,  // 4: zenfra.tunnel.v1.Envelope.cancel_ack:type_name -> zenfra.tunnel.v1.CancelAck
-	10, // 5: zenfra.tunnel.v1.Envelope.error:type_name -> zenfra.tunnel.v1.Error
-	11, // 6: zenfra.tunnel.v1.HTTPRequest.headers:type_name -> zenfra.tunnel.v1.HTTPRequest.HeadersEntry
-	0,  // 7: zenfra.tunnel.v1.HTTPRequest.deadline_class:type_name -> zenfra.tunnel.v1.DeadlineClass
-	12, // 8: zenfra.tunnel.v1.HTTPResponseHead.headers:type_name -> zenfra.tunnel.v1.HTTPResponseHead.HeadersEntry
-	1,  // 9: zenfra.tunnel.v1.CancelAck.outcome:type_name -> zenfra.tunnel.v1.CancelOutcome
-	2,  // 10: zenfra.tunnel.v1.Error.origin:type_name -> zenfra.tunnel.v1.ErrorOrigin
-	4,  // 11: zenfra.tunnel.v1.HTTPRequest.HeadersEntry.value:type_name -> zenfra.tunnel.v1.HeaderValues
-	4,  // 12: zenfra.tunnel.v1.HTTPResponseHead.HeadersEntry.value:type_name -> zenfra.tunnel.v1.HeaderValues
-	13, // [13:13] is the sub-list for method output_type
-	13, // [13:13] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	7,  // 0: zenfra.tunnel.v1.Envelope.http_request:type_name -> zenfra.tunnel.v1.HTTPRequest
+	8,  // 1: zenfra.tunnel.v1.Envelope.http_response_head:type_name -> zenfra.tunnel.v1.HTTPResponseHead
+	9,  // 2: zenfra.tunnel.v1.Envelope.body_chunk:type_name -> zenfra.tunnel.v1.BodyChunk
+	10, // 3: zenfra.tunnel.v1.Envelope.cancel:type_name -> zenfra.tunnel.v1.Cancel
+	11, // 4: zenfra.tunnel.v1.Envelope.cancel_ack:type_name -> zenfra.tunnel.v1.CancelAck
+	12, // 5: zenfra.tunnel.v1.Envelope.error:type_name -> zenfra.tunnel.v1.Error
+	4,  // 6: zenfra.tunnel.v1.Envelope.event:type_name -> zenfra.tunnel.v1.Event
+	5,  // 7: zenfra.tunnel.v1.Envelope.event_ack:type_name -> zenfra.tunnel.v1.EventAck
+	13, // 8: zenfra.tunnel.v1.HTTPRequest.headers:type_name -> zenfra.tunnel.v1.HTTPRequest.HeadersEntry
+	0,  // 9: zenfra.tunnel.v1.HTTPRequest.deadline_class:type_name -> zenfra.tunnel.v1.DeadlineClass
+	14, // 10: zenfra.tunnel.v1.HTTPResponseHead.headers:type_name -> zenfra.tunnel.v1.HTTPResponseHead.HeadersEntry
+	1,  // 11: zenfra.tunnel.v1.CancelAck.outcome:type_name -> zenfra.tunnel.v1.CancelOutcome
+	2,  // 12: zenfra.tunnel.v1.Error.origin:type_name -> zenfra.tunnel.v1.ErrorOrigin
+	6,  // 13: zenfra.tunnel.v1.HTTPRequest.HeadersEntry.value:type_name -> zenfra.tunnel.v1.HeaderValues
+	6,  // 14: zenfra.tunnel.v1.HTTPResponseHead.HeadersEntry.value:type_name -> zenfra.tunnel.v1.HeaderValues
+	15, // [15:15] is the sub-list for method output_type
+	15, // [15:15] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_tunnel_tunnel_proto_init() }
@@ -873,6 +1059,8 @@ func file_tunnel_tunnel_proto_init() {
 		(*Envelope_Cancel)(nil),
 		(*Envelope_CancelAck)(nil),
 		(*Envelope_Error)(nil),
+		(*Envelope_Event)(nil),
+		(*Envelope_EventAck)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -880,7 +1068,7 @@ func file_tunnel_tunnel_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_tunnel_tunnel_proto_rawDesc), len(file_tunnel_tunnel_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   10,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

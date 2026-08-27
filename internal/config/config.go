@@ -67,6 +67,8 @@ const (
 	EnvInteractiveConnections = "ZENFRA_VCS_CONNECTOR_INTERACTIVE_CONNECTIONS"
 	EnvLogLevel               = "ZENFRA_VCS_CONNECTOR_LOG_LEVEL"
 	EnvMetricsAddr            = "ZENFRA_VCS_CONNECTOR_METRICS_ADDR"
+	EnvWebhookAddr            = "ZENFRA_VCS_CONNECTOR_WEBHOOK_ADDR"
+	EnvWebhookSecretFile      = "ZENFRA_VCS_CONNECTOR_WEBHOOK_SECRET_FILE" //nolint:gosec // env var name
 )
 
 // ErrInvalidConfig marks a terminal configuration problem. A connector that gets
@@ -118,6 +120,15 @@ type Config struct {
 	// disables it: the connector runs inside the customer's network, so exposing
 	// a listener at all is their decision.
 	MetricsAddr string
+
+	// WebhookAddr optionally serves the local webhook endpoint the customer's
+	// VCS posts push events to, on host:port. Empty disables push triggers
+	// entirely, which is the default: nothing listens unless asked.
+	WebhookAddr string
+	// WebhookSecretFile holds the shared secret the VCS is configured with. It
+	// is required whenever WebhookAddr is set — an unauthenticated listener
+	// inside the customer's network would let anything on it trigger runs.
+	WebhookSecretFile string
 }
 
 // String renders the config for diagnostics with credentials redacted.
@@ -138,11 +149,16 @@ func (c *Config) String() string {
 	if c.MetricsAddr != "" {
 		metrics = "metrics=" + c.MetricsAddr
 	}
+	webhook := "webhook=disabled"
+	if c.WebhookAddr != "" {
+		webhook = "webhook=" + c.WebhookAddr
+	}
 	return fmt.Sprintf(
 		"gateway=%s vendor=%s endpoint=%s%s instance=%s %s interactive=%d secret-file=%s "+
-			"ca-bundle=%s upstream-ca-bundle=%s %s %s",
+			"ca-bundle=%s upstream-ca-bundle=%s %s %s %s",
 		c.GatewayURL, c.Vendor, c.Endpoint, codeload, c.InstanceKey, scope,
 		c.InteractiveConnections, c.SecretFile, c.CABundle, c.UpstreamCABundle, enrollment, metrics,
+		webhook,
 	)
 }
 
@@ -191,6 +207,10 @@ func Load(args []string, getenv func(string) string) (*Config, error) {
 		"log level (debug, info, warn, error)")
 	fs.StringVar(&cfg.MetricsAddr, "metrics-addr", getenv(EnvMetricsAddr),
 		"serve Prometheus metrics on this host:port (default: disabled)")
+	fs.StringVar(&cfg.WebhookAddr, "webhook-addr", getenv(EnvWebhookAddr),
+		"serve the local VCS webhook endpoint on this host:port (default: disabled)")
+	fs.StringVar(&cfg.WebhookSecretFile, "webhook-secret-file", getenv(EnvWebhookSecretFile),
+		"path to the file holding the webhook shared secret (required with --webhook-addr)")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidConfig, err)
@@ -249,6 +269,20 @@ func (c *Config) normalize() error {
 		return err
 	}
 
+	if err := c.normalizeScope(); err != nil {
+		return err
+	}
+
+	if err := c.normalizeMetricsAddr(); err != nil {
+		return err
+	}
+
+	return c.normalizeWebhookAddr()
+}
+
+// normalizeScope validates the project allowlist, the stream count and the
+// instance key — the settings that describe what this instance serves.
+func (c *Config) normalizeScope() error {
 	switch {
 	case c.AllProjects && len(c.AllowedProjects) > 0:
 		return fmt.Errorf("%w: --allowed-projects and --all-projects are mutually exclusive",
@@ -261,10 +295,6 @@ func (c *Config) normalize() error {
 	if c.InteractiveConnections < 1 {
 		return fmt.Errorf("%w: --interactive-connections must be at least 1, got %d",
 			ErrInvalidConfig, c.InteractiveConnections)
-	}
-
-	if err := c.normalizeMetricsAddr(); err != nil {
-		return err
 	}
 
 	if c.InstanceKey == "" {
@@ -288,6 +318,25 @@ func (c *Config) normalizeMetricsAddr() error {
 	if _, _, err := net.SplitHostPort(c.MetricsAddr); err != nil {
 		return fmt.Errorf("%w: --metrics-addr must be host:port (or set %s): %w",
 			ErrInvalidConfig, EnvMetricsAddr, err)
+	}
+	return nil
+}
+
+// normalizeWebhookAddr validates the optional webhook listener address and the
+// secret that must come with it.
+func (c *Config) normalizeWebhookAddr() error {
+	c.WebhookAddr = strings.TrimSpace(c.WebhookAddr)
+	c.WebhookSecretFile = strings.TrimSpace(c.WebhookSecretFile)
+	if c.WebhookAddr == "" {
+		return nil
+	}
+	if _, _, err := net.SplitHostPort(c.WebhookAddr); err != nil {
+		return fmt.Errorf("%w: --webhook-addr must be host:port (or set %s): %w",
+			ErrInvalidConfig, EnvWebhookAddr, err)
+	}
+	if c.WebhookSecretFile == "" {
+		return fmt.Errorf("%w: --webhook-secret-file is required with --webhook-addr (or set %s)",
+			ErrInvalidConfig, EnvWebhookSecretFile)
 	}
 	return nil
 }

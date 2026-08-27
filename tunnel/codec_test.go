@@ -307,3 +307,114 @@ func TestErrorCodesAreStable(t *testing.T) {
 		}
 	}
 }
+
+func TestRoundTripEvent(t *testing.T) {
+	env := &Envelope{
+		RequestId: "evt-1",
+		Msg: &Envelope_Event{Event: &Event{
+			Vendor:     "gitlab",
+			EventType:  "push",
+			DeliveryId: "5f9c1c8a-0000-4000-8000-000000000001",
+			Payload:    []byte(`{"object_kind":"push"}`),
+		}},
+	}
+	got := roundTrip(t, env)
+	event := got.GetEvent()
+	if event == nil {
+		t.Fatal("decoded envelope is not an Event")
+	}
+	if event.GetDeliveryId() != "5f9c1c8a-0000-4000-8000-000000000001" {
+		t.Errorf("delivery id = %q", event.GetDeliveryId())
+	}
+	if !bytes.Equal(event.GetPayload(), []byte(`{"object_kind":"push"}`)) {
+		t.Errorf("payload = %q", event.GetPayload())
+	}
+}
+
+func TestRoundTripEventAck(t *testing.T) {
+	roundTrip(t, &Envelope{
+		RequestId: "evt-1",
+		Msg:       &Envelope_EventAck{EventAck: &EventAck{Accepted: true}},
+	})
+	got := roundTrip(t, &Envelope{
+		RequestId: "evt-2",
+		Msg: &Envelope_EventAck{EventAck: &EventAck{
+			Code: ErrCodePolicyDenied, Message: "no stack matches",
+		}},
+	})
+	if got.GetEventAck().GetAccepted() {
+		t.Error("a refused ack must not report accepted")
+	}
+}
+
+// A redelivered webhook keeps its delivery id under a fresh request id: the ack
+// correlates the attempt, the delivery id makes the relay replay-safe.
+func TestEventRetryKeepsDeliveryID(t *testing.T) {
+	const deliveryID = "delivery-42"
+	first := &Envelope{
+		RequestId: "evt-1",
+		Msg: &Envelope_Event{Event: &Event{
+			Vendor: "gitlab", EventType: "push", DeliveryId: deliveryID,
+			Payload: []byte(`{}`),
+		}},
+	}
+	retry := &Envelope{
+		RequestId: "evt-2",
+		Msg: &Envelope_Event{Event: &Event{
+			Vendor: "gitlab", EventType: "push", DeliveryId: deliveryID,
+			Payload: []byte(`{}`),
+		}},
+	}
+	if roundTrip(t, first).GetEvent().GetDeliveryId() != roundTrip(t, retry).GetEvent().GetDeliveryId() {
+		t.Fatal("a retried event must carry the same delivery id")
+	}
+	if first.GetRequestId() == retry.GetRequestId() {
+		t.Fatal("a retried event must carry a fresh request id")
+	}
+}
+
+func TestEncodeRejectsIncompleteEvent(t *testing.T) {
+	for name, event := range map[string]*Event{
+		"no vendor":      {EventType: "push", DeliveryId: "d1"},
+		"no event type":  {Vendor: "gitlab", DeliveryId: "d1"},
+		"no delivery id": {Vendor: "gitlab", EventType: "push"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Encode(&Envelope{RequestId: "evt-1", Msg: &Envelope_Event{Event: event}})
+			if !errors.Is(err, ErrEventIncomplete) {
+				t.Fatalf("Encode error = %v, want ErrEventIncomplete", err)
+			}
+		})
+	}
+}
+
+func TestEncodeRejectsOversizedEvent(t *testing.T) {
+	_, err := Encode(&Envelope{
+		RequestId: "evt-1",
+		Msg: &Envelope_Event{Event: &Event{
+			Vendor: "gitlab", EventType: "push", DeliveryId: "d1",
+			Payload: make([]byte, MaxEventBytes+1),
+		}},
+	})
+	if !errors.Is(err, ErrEventTooLarge) {
+		t.Fatalf("Encode error = %v, want ErrEventTooLarge", err)
+	}
+}
+
+// An oversized event must die at Decode too: a peer that skipped Encode's
+// validation cannot smuggle one past the receiver.
+func TestDecodeRejectsOversizedEvent(t *testing.T) {
+	raw, err := proto.Marshal(&Envelope{
+		RequestId: "evt-1",
+		Msg: &Envelope_Event{Event: &Event{
+			Vendor: "gitlab", EventType: "push", DeliveryId: "d1",
+			Payload: make([]byte, MaxEventBytes+1),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if _, err := Decode(raw); !errors.Is(err, ErrEventTooLarge) {
+		t.Fatalf("Decode error = %v, want ErrEventTooLarge", err)
+	}
+}

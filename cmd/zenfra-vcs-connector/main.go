@@ -20,6 +20,7 @@ import (
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/executor"
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/metrics"
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/policy"
+	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/webhook"
 )
 
 // version is stamped at build time with -ldflags "-X main.version=..." and is
@@ -92,11 +93,42 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 
 	manager := connect.NewManager(cfg, connect.NewClient(cfg.GatewayURL, nil), dialer, version, logger)
 	manager.Metrics = collector
+
+	stopWebhooks, err := serveWebhooks(cfg, manager, logger)
+	if err != nil {
+		return err
+	}
+	defer stopWebhooks()
+
 	if err := manager.Run(ctx); err != nil {
 		return fmt.Errorf("tunnel stopped: %w", err)
 	}
 	logger.Info("zenfra-vcs-connector stopped")
 	return nil
+}
+
+// serveWebhooks starts the optional local webhook listener and returns its
+// shutdown. Disabled by default: the customer decides whether their VCS may
+// reach this process at all.
+func serveWebhooks(
+	cfg *config.Config,
+	relay webhook.Relay,
+	logger *slog.Logger,
+) (func(), error) {
+	if cfg.WebhookAddr == "" {
+		return func() {}, nil
+	}
+	secret, err := os.ReadFile(cfg.WebhookSecretFile) //nolint:gosec // the operator chooses the path
+	if err != nil {
+		return nil, fmt.Errorf("%w: reading --webhook-secret-file: %w", config.ErrInvalidConfig, err)
+	}
+	listener, err := webhook.NewListener(
+		cfg.Vendor, strings.TrimSpace(string(secret)), relay, logger,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", config.ErrInvalidConfig, err)
+	}
+	return listener.Serve(cfg.WebhookAddr)
 }
 
 // serveMetrics starts the optional Prometheus endpoint and returns its shutdown.

@@ -17,7 +17,31 @@ message Envelope {
     Cancel cancel = 5;
     CancelAck cancel_ack = 6;
     Error error = 7;
+    Event event = 8;
+    EventAck event_ack = 9;
   }
+}
+
+// Event carries a vendor webhook the connector received inside the customer's
+// network. It is the only exchange a connector initiates, and the gateway
+// answers it with exactly one EventAck carrying the same request_id.
+message Event {
+  // Vendor and event_type name the payload's shape, e.g. "gitlab" / "push".
+  string vendor = 1;
+  string event_type = 2;
+  // delivery_id is the vendor's own delivery identifier, carried unchanged
+  // across a redelivery or a connector-side retry. It is what makes the relay
+  // replay-safe: the control plane collapses a repeat instead of acting twice.
+  string delivery_id = 3;
+  // payload is the verbatim webhook body, capped at MaxEventBytes.
+  bytes payload = 4;
+}
+
+// EventAck settles one Event. accepted=false carries a stable ErrCode* in code.
+message EventAck {
+  bool accepted = 1;
+  string code = 2;
+  string message = 3;
 }
 
 // DeadlineClass selects the gateway/connector deadline profile for a request.

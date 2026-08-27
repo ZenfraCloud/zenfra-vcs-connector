@@ -19,6 +19,8 @@ import (
 
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/config"
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/metrics"
+	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/webhook"
+	"github.com/ZenfraCloud/zenfra-vcs-connector/tunnel"
 )
 
 func noEnv(string) string { return "" }
@@ -183,6 +185,114 @@ func TestServeMetricsUnusableAddressIsTerminal(t *testing.T) {
 	// process exits instead of running without the endpoint it was asked for.
 	_, err := serveMetrics("203.0.113.1:1", metrics.New(time.Unix(0, 0)), newLogger("info"))
 	if !errors.Is(err, config.ErrInvalidConfig) {
+		t.Fatalf("want ErrInvalidConfig, got %v", err)
+	}
+}
+
+// stubRelay stands in for the tunnel in webhook wiring tests.
+type stubRelay struct{ calls atomic.Int64 }
+
+func (s *stubRelay) SendEvent(context.Context, *tunnel.Event) (*tunnel.EventAck, error) {
+	s.calls.Add(1)
+	return &tunnel.EventAck{Accepted: true}, nil
+}
+
+func webhookConfig(t *testing.T, addr, secretFile string) *config.Config {
+	t.Helper()
+	args := []string{
+		"--gateway-url", "http://gw",
+		"--bootstrap-token", "vcsc_a.b",
+		"--endpoint", "http://gitlab.internal",
+		"--vendor", "gitlab",
+		"--secret-file", "/secrets/vcs-token",
+		"--all-projects",
+		"--instance-key", "connector-0",
+	}
+	if addr != "" {
+		args = append(args, "--webhook-addr", addr, "--webhook-secret-file", secretFile)
+	}
+	cfg, err := config.Load(args, noEnv)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	return cfg
+}
+
+func TestServeWebhooksDisabledByDefault(t *testing.T) {
+	relay := &stubRelay{}
+	stop, err := serveWebhooks(webhookConfig(t, "", ""), relay, newLogger("info"))
+	if err != nil {
+		t.Fatalf("serveWebhooks: %v", err)
+	}
+	stop()
+}
+
+func TestServeWebhooksServesTheEndpoint(t *testing.T) {
+	secretFile := filepath.Join(t.TempDir(), "hook-secret")
+	if err := os.WriteFile(secretFile, []byte("s3cret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := listener.Addr().String()
+	if closeErr := listener.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+
+	relay := &stubRelay{}
+	stop, err := serveWebhooks(webhookConfig(t, addr, secretFile), relay, newLogger("info"))
+	if err != nil {
+		t.Fatalf("serveWebhooks: %v", err)
+	}
+	defer stop()
+
+	deadline := time.Now().Add(5 * time.Second)
+	var status int
+	for time.Now().Before(deadline) {
+		req, reqErr := http.NewRequestWithContext(context.Background(), http.MethodPost,
+			"http://"+addr+webhook.Path, strings.NewReader(`{"object_kind":"push"}`))
+		if reqErr != nil {
+			t.Fatal(reqErr)
+		}
+		// The trailing newline in the secret file must not be part of the secret.
+		req.Header.Set("X-Gitlab-Token", "s3cret")
+		req.Header.Set("X-Gitlab-Event", "Push Hook")
+		req.Header.Set("X-Gitlab-Event-UUID", "delivery-1")
+		resp, doErr := http.DefaultClient.Do(req)
+		if doErr != nil {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		status = resp.StatusCode
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		break
+	}
+	if status != http.StatusAccepted {
+		t.Fatalf("webhook status = %d, want 202", status)
+	}
+	if relay.calls.Load() != 1 {
+		t.Fatalf("relayed %d events, want 1", relay.calls.Load())
+	}
+}
+
+func TestServeWebhooksMissingSecretFileIsTerminal(t *testing.T) {
+	cfg := webhookConfig(t, "127.0.0.1:0", filepath.Join(t.TempDir(), "absent"))
+	if _, err := serveWebhooks(cfg, &stubRelay{}, newLogger("info")); !errors.Is(err, config.ErrInvalidConfig) {
+		t.Fatalf("want ErrInvalidConfig, got %v", err)
+	}
+}
+
+func TestServeWebhooksEmptySecretIsTerminal(t *testing.T) {
+	secretFile := filepath.Join(t.TempDir(), "hook-secret")
+	if err := os.WriteFile(secretFile, []byte("\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := webhookConfig(t, "127.0.0.1:0", secretFile)
+	if _, err := serveWebhooks(cfg, &stubRelay{}, newLogger("info")); !errors.Is(err, config.ErrInvalidConfig) {
 		t.Fatalf("want ErrInvalidConfig, got %v", err)
 	}
 }
