@@ -61,10 +61,16 @@ spec:
                 secretKeyRef:
                   name: {{ required "secret.name is required" .Values.secret.name | quote }}
                   key: {{ .Values.secret.bootstrapTokenKey | quote }}
+            {{- if not (eq .Values.connector.credentialMode "control_plane") }}
             # The upstream VCS credential stays a file: it is read per request
             # and never leaves the customer network.
             - name: ZENFRA_VCS_CONNECTOR_SECRET_FILE
               value: {{ include "zenfra-vcs-connector.secretFilePath" . | quote }}
+            {{- end }}
+            - name: ZENFRA_VCS_CONNECTOR_CREDENTIAL_MODE
+              value: {{ .Values.connector.credentialMode | quote }}
+            - name: ZENFRA_VCS_CONNECTOR_POLICY_MODE
+              value: {{ .Values.connector.policyMode | quote }}
             {{- if .Values.connector.allProjects }}
             - name: ZENFRA_VCS_CONNECTOR_ALL_PROJECTS
               value: "true"
@@ -118,9 +124,11 @@ spec:
             periodSeconds: 30
           {{- end }}
           volumeMounts:
+            {{- if not (eq .Values.connector.credentialMode "control_plane") }}
             - name: connector-secret
               mountPath: {{ .Values.secret.mountPath | quote }}
               readOnly: true
+            {{- end }}
             {{- if .Values.caBundle.configMapName }}
             - name: ca-bundle
               mountPath: {{ .Values.caBundle.mountPath | quote }}
@@ -129,6 +137,7 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
+        {{- if not (eq .Values.connector.credentialMode "control_plane") }}
         - name: connector-secret
           secret:
             secretName: {{ .Values.secret.name | quote }}
@@ -137,6 +146,7 @@ spec:
             items:
               - key: {{ .Values.secret.credentialKey | quote }}
                 path: {{ .Values.secret.credentialKey | quote }}
+        {{- end }}
         {{- if .Values.caBundle.configMapName }}
         - name: ca-bundle
           configMap:

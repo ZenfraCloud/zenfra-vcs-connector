@@ -80,6 +80,7 @@ func (d *Decision) StampHeader(h http.Header) {
 // scoping. It is immutable after construction and safe for concurrent use.
 type Engine struct {
 	vendor      config.Vendor
+	mode        config.PolicyMode
 	rules       []Rule
 	projects    map[string]struct{}
 	allProjects bool
@@ -103,8 +104,13 @@ func NewEngine(cfg *config.Config) (*Engine, error) {
 			cfg.Vendor, config.VendorGitLab, config.VendorGitHub,
 			config.VendorBitbucket, config.VendorAzureDevOps)
 	}
+	mode := cfg.PolicyMode
+	if mode == "" {
+		mode = config.PolicyModeAllowlist
+	}
 	e := &Engine{
 		vendor:      cfg.Vendor,
+		mode:        mode,
 		rules:       rules,
 		projects:    make(map[string]struct{}, len(cfg.AllowedProjects)),
 		allProjects: cfg.AllProjects,
@@ -112,9 +118,12 @@ func NewEngine(cfg *config.Config) (*Engine, error) {
 	for _, project := range cfg.AllowedProjects {
 		e.projects[normalizeProject(project)] = struct{}{}
 	}
-	e.hash = policyHash(e.vendor, e.rules)
+	e.hash = policyHash(e.vendor, e.mode, e.rules)
 	return e, nil
 }
+
+// Mode reports the enforcement model this engine was built with.
+func (e *Engine) Mode() config.PolicyMode { return e.mode }
 
 // Rules returns the compiled table. The slice is a copy; the rules themselves are
 // read-only.
@@ -146,6 +155,13 @@ func (e *Engine) Evaluate(method, rawPath, rawQuery string) Decision {
 
 	rule, project, matched := e.match(dec.Method, path)
 	if !matched {
+		// Blocklist mode answers everything the compiled table did not: the
+		// allowlist still runs first, so a known operation keeps its rule ID and
+		// its project scoping, and only the rest reaches the deny table.
+		if e.mode == config.PolicyModeBlocklist {
+			blocklistDecide(&dec, path, query)
+			return dec
+		}
 		if rule == nil {
 			dec.Reason = fmt.Sprintf("no rule allows %s %s", dec.Method, path)
 			return dec
@@ -227,11 +243,16 @@ func normalizeProject(project string) string {
 	return strings.ToLower(strings.Trim(strings.TrimSpace(project), "/"))
 }
 
-// policyHash digests the rule table so any change to the allowlist produces a new
-// fingerprint.
-func policyHash(vendor config.Vendor, rules []Rule) string {
+// policyHash digests the rule table so any change to the allowlist — or to the
+// enforcement mode — produces a new fingerprint. The gateway pins it, so an
+// instance quietly switched to blocklist mode cannot join a connector whose other
+// instances enforce the allowlist.
+func policyHash(vendor config.Vendor, mode config.PolicyMode, rules []Rule) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "vendor=%s\n", vendor)
+	if mode == config.PolicyModeBlocklist {
+		b.WriteString(denyTableFingerprint(string(mode)))
+	}
 	for _, rule := range rules {
 		fmt.Fprintf(&b, "%s %s %s %s %s\n",
 			rule.Method, rule.pattern.String(), rule.ID, rule.Origin, rule.RedirectsTo)

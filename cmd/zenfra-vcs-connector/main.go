@@ -63,6 +63,7 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 
 	logger := newLogger(cfg.LogLevel)
 	logger.Info("starting zenfra-vcs-connector", "version", version, "config", cfg.String())
+	warnOptionalModes(cfg, logger)
 
 	engine, err := policy.NewEngine(cfg)
 	if err != nil {
@@ -105,6 +106,24 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 	}
 	logger.Info("zenfra-vcs-connector stopped")
 	return nil
+}
+
+// warnOptionalModes says out loud, once per start, that this connector is not
+// running the defaults. Both opt-ins weaken a guarantee customers were sold on,
+// so an operator reading the first ten log lines has to see it.
+func warnOptionalModes(cfg *config.Config, logger *slog.Logger) {
+	if cfg.CredentialMode == config.CredentialModeControlPlane {
+		logger.Warn(
+			"credential mode is control_plane: Zenfra stores the upstream credential and "+
+				"sends it over the tunnel, so it leaves this network — see docs/optional-modes.md",
+			"credential_mode", string(cfg.CredentialMode))
+	}
+	if cfg.PolicyMode == config.PolicyModeBlocklist {
+		logger.Warn(
+			"policy mode is blocklist: every operation the compiled allowlist does not "+
+				"describe is allowed unless the deny table refuses it — see docs/optional-modes.md",
+			"policy_mode", string(cfg.PolicyMode))
+	}
 }
 
 // serveWebhooks starts the optional local webhook listener and returns its

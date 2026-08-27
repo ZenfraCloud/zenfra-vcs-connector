@@ -212,3 +212,46 @@ func TestVerificationScriptDetectsDigestMismatch(t *testing.T) {
 		t.Fatalf("expected a digest-mismatch message, got:\n%s", out)
 	}
 }
+
+// TestHelmChartRendersOptionalModes covers the opt-in modes from
+// docs/optional-modes.md: they default off, and control_plane credentials drop
+// the mounted secret file the connector would otherwise refuse to start with.
+func TestHelmChartRendersOptionalModes(t *testing.T) {
+	requireTool(t, "helm")
+
+	defaults, err := runTool(t, time.Minute, "helm",
+		append([]string{"template", "release", chartDir}, chartValues...)...)
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, defaults)
+	}
+	for _, want := range []string{
+		"ZENFRA_VCS_CONNECTOR_CREDENTIAL_MODE",
+		`value: "agent_local"`,
+		"ZENFRA_VCS_CONNECTOR_POLICY_MODE",
+		`value: "allowlist"`,
+		"ZENFRA_VCS_CONNECTOR_SECRET_FILE",
+	} {
+		if !strings.Contains(defaults, want) {
+			t.Errorf("default render is missing %q", want)
+		}
+	}
+
+	optIn, err := runTool(t, time.Minute, "helm", append(append([]string{
+		"template", "release", chartDir}, chartValues...),
+		"--set", "connector.credentialMode=control_plane",
+		"--set", "connector.policyMode=blocklist",
+		"--set", "connector.allProjects=true",
+	)...)
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, optIn)
+	}
+	if strings.Contains(optIn, "ZENFRA_VCS_CONNECTOR_SECRET_FILE") {
+		t.Error("control_plane mode must not point the connector at a secret file")
+	}
+	if strings.Contains(optIn, "connector-secret") {
+		t.Error("control_plane mode must not mount the upstream credential")
+	}
+	if !strings.Contains(optIn, `value: "blocklist"`) {
+		t.Error("blocklist policy mode did not reach the pod")
+	}
+}

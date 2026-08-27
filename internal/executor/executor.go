@@ -100,6 +100,12 @@ type Responder interface {
 // Executor serves tunneled requests against one upstream VCS endpoint.
 type Executor struct {
 	vendor config.Vendor
+	// credentialMode decides where the upstream credential comes from: the local
+	// secret file (the default) or the control plane, over the tunnel.
+	credentialMode config.CredentialMode
+	// acceptedCredentialHeader is the one inbound credential header control_plane
+	// mode takes; empty in agent_local mode, where every one of them is refused.
+	acceptedCredentialHeader string
 	// origins are the base URLs the operator pinned at startup, keyed by the
 	// origin a policy rule names. Nothing on the wire can add or change one.
 	origins    map[policy.Origin]string
@@ -152,13 +158,20 @@ func New(cfg *config.Config, engine *policy.Engine, audit *slog.Logger) (*Execut
 		origins[policy.OriginCodeload] = strings.TrimSuffix(cfg.CodeloadEndpoint, "/")
 	}
 
+	accepted := ""
+	if cfg.CredentialMode == config.CredentialModeControlPlane {
+		accepted = vendorCredentialHeader(cfg.Vendor)
+	}
+
 	return &Executor{
-		vendor:     cfg.Vendor,
-		origins:    origins,
-		secretFile: cfg.SecretFile,
-		engine:     engine,
-		limits:     DefaultLimits(),
-		audit:      audit,
+		vendor:                   cfg.Vendor,
+		credentialMode:           cfg.CredentialMode,
+		acceptedCredentialHeader: accepted,
+		origins:                  origins,
+		secretFile:               cfg.SecretFile,
+		engine:                   engine,
+		limits:                   DefaultLimits(),
+		audit:                    audit,
 		client: &http.Client{
 			Transport: transport,
 			// SECURITY: never follow redirects — a redirect would replay the
@@ -204,7 +217,7 @@ func (e *Executor) Handle(ctx context.Context, req *connect.Request, w Responder
 	// A credential arriving from the control plane is either a bug or an attempt
 	// to ride this connector's upstream session; it is refused before the request
 	// is even evaluated.
-	if name := credentialHeader(head.GetHeaders()); name != "" {
+	if name := credentialHeader(head.GetHeaders(), e.acceptedCredentialHeader); name != "" {
 		rec.Reason = "inbound " + name + " header is not accepted"
 		e.fail(w, rec, tunnel.ErrCodeProtocol, rec.Reason, false, tunnel.ErrorOrigin_ERROR_ORIGIN_CONNECTOR)
 		return
@@ -337,13 +350,34 @@ func (e *Executor) buildRequest(
 	// in general, and its URL is already authorized by the redirect that named it,
 	// so the credential stays on the primary leg.
 	if dec.Origin == policy.OriginPrimary {
-		token, err := readSecret(e.secretFile)
-		if err != nil {
+		if err := e.injectCredential(req, head); err != nil {
 			return nil, err
 		}
-		e.authorize(req, token)
 	}
 	return req, nil
+}
+
+// injectCredential attaches the upstream credential. In the default agent_local
+// mode it comes from the local secret file and the control plane never sees it;
+// in the opt-in control_plane mode it is the value the gateway sent, forwarded
+// verbatim so the vendor's own scheme travels with it.
+func (e *Executor) injectCredential(req *http.Request, head *tunnel.HTTPRequest) error {
+	if e.credentialMode != config.CredentialModeControlPlane {
+		token, err := readSecret(e.secretFile)
+		if err != nil {
+			return err
+		}
+		e.authorize(req, token)
+		return nil
+	}
+	credential := tunneledCredential(head.GetHeaders(), e.acceptedCredentialHeader)
+	if credential == "" {
+		return fmt.Errorf(
+			"no %s credential arrived from the control plane (credential-mode %s)",
+			e.acceptedCredentialHeader, config.CredentialModeControlPlane)
+	}
+	req.Header.Set(e.acceptedCredentialHeader, credential)
+	return nil
 }
 
 // authorize attaches the vendor's credential header. GitHub Enterprise and

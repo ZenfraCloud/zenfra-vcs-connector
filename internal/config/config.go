@@ -46,6 +46,32 @@ func (v Vendor) supported() bool {
 	return false
 }
 
+// CredentialMode names who supplies the upstream VCS credential.
+type CredentialMode string
+
+const (
+	// CredentialModeAgentLocal is the default and recommended mode: the credential
+	// lives in this network, is read from --secret-file after policy approval, and
+	// Zenfra never holds it. An inbound credential is refused.
+	CredentialModeAgentLocal CredentialMode = "agent_local"
+	// CredentialModeControlPlane is the opt-in mode where Zenfra stores the
+	// credential and sends it over the tunnel, and this connector forwards it
+	// upstream. It trades the token-stays-home property away — see
+	// docs/optional-modes.md.
+	CredentialModeControlPlane CredentialMode = "control_plane"
+)
+
+// PolicyMode selects how the connector decides what may reach the upstream.
+type PolicyMode string
+
+const (
+	// PolicyModeAllowlist is the default: only compiled-in operations pass.
+	PolicyModeAllowlist PolicyMode = "allowlist"
+	// PolicyModeBlocklist is the opt-in advanced mode: anything the compiled
+	// allowlist does not cover is allowed unless it hits the deny table.
+	PolicyModeBlocklist PolicyMode = "blocklist"
+)
+
 // DefaultInteractiveConnections is the interactive stream count per instance; one
 // bulk stream is always opened alongside them.
 const DefaultInteractiveConnections = 3
@@ -60,6 +86,8 @@ const (
 	EnvSecretFile             = "ZENFRA_VCS_CONNECTOR_SECRET_FILE" //nolint:gosec // env var name
 	EnvAllowedProjects        = "ZENFRA_VCS_CONNECTOR_ALLOWED_PROJECTS"
 	EnvAllProjects            = "ZENFRA_VCS_CONNECTOR_ALL_PROJECTS"
+	EnvCredentialMode         = "ZENFRA_VCS_CONNECTOR_CREDENTIAL_MODE" //nolint:gosec // env var name
+	EnvPolicyMode             = "ZENFRA_VCS_CONNECTOR_POLICY_MODE"
 	EnvInstanceKey            = "ZENFRA_VCS_CONNECTOR_INSTANCE_KEY"
 	EnvEnrollmentKeyFile      = "ZENFRA_VCS_CONNECTOR_ENROLLMENT_KEY_FILE" //nolint:gosec // env var name
 	EnvCABundle               = "ZENFRA_VCS_CONNECTOR_CA_BUNDLE"
@@ -107,12 +135,17 @@ type Config struct {
 	// be a free rewrite of where a request lands.
 	CodeloadEndpoint string
 	// SecretFile holds the upstream VCS credential, read at request time and
-	// never sent to the control plane.
+	// never sent to the control plane. Required in agent_local mode, forbidden
+	// in control_plane mode, where there is no local credential to read.
 	SecretFile string
+	// CredentialMode picks who holds the upstream credential; agent_local by default.
+	CredentialMode CredentialMode
 
 	// AllowedProjects scopes every tunneled request; AllProjects opts out of scoping.
 	AllowedProjects []string
 	AllProjects     bool
+	// PolicyMode picks the enforcement model; allowlist by default.
+	PolicyMode PolicyMode
 
 	InteractiveConnections int
 	LogLevel               string
@@ -155,10 +188,10 @@ func (c *Config) String() string {
 	}
 	return fmt.Sprintf(
 		"gateway=%s vendor=%s endpoint=%s%s instance=%s %s interactive=%d secret-file=%s "+
-			"ca-bundle=%s upstream-ca-bundle=%s %s %s %s",
+			"ca-bundle=%s upstream-ca-bundle=%s %s %s %s credential-mode=%s policy-mode=%s",
 		c.GatewayURL, c.Vendor, c.Endpoint, codeload, c.InstanceKey, scope,
 		c.InteractiveConnections, c.SecretFile, c.CABundle, c.UpstreamCABundle, enrollment, metrics,
-		webhook,
+		webhook, c.CredentialMode, c.PolicyMode,
 	)
 }
 
@@ -192,6 +225,14 @@ func Load(args []string, getenv func(string) string) (*Config, error) {
 		"comma-separated project IDs or paths this connector may serve")
 	fs.BoolVar(&cfg.AllProjects, "all-projects", getenv(EnvAllProjects) == "true",
 		"serve every project the credential can reach instead of an allowlist")
+	fs.StringVar((*string)(&cfg.CredentialMode), "credential-mode",
+		orDefault(getenv(EnvCredentialMode), string(CredentialModeAgentLocal)),
+		"who holds the upstream credential ("+string(CredentialModeAgentLocal)+" or "+
+			string(CredentialModeControlPlane)+")")
+	fs.StringVar((*string)(&cfg.PolicyMode), "policy-mode",
+		orDefault(getenv(EnvPolicyMode), string(PolicyModeAllowlist)),
+		"request enforcement model ("+string(PolicyModeAllowlist)+" or "+
+			string(PolicyModeBlocklist)+")")
 	fs.StringVar(&cfg.InstanceKey, "instance-key", getenv(EnvInstanceKey),
 		"stable identifier for this instance (default: hostname)")
 	fs.StringVar(&cfg.EnrollmentKeyFile, "enrollment-key-file", getenv(EnvEnrollmentKeyFile),
@@ -232,7 +273,6 @@ func (c *Config) checkRequired() error {
 		{c.BootstrapToken, "--bootstrap-token", EnvBootstrapToken},
 		{c.Endpoint, "--endpoint", EnvEndpoint},
 		{string(c.Vendor), "--vendor", EnvVendor},
-		{c.SecretFile, "--secret-file", EnvSecretFile},
 	} {
 		if strings.TrimSpace(required.value) == "" {
 			return fmt.Errorf("%w: %s is required (or set %s)",
@@ -240,6 +280,57 @@ func (c *Config) checkRequired() error {
 		}
 	}
 	return nil
+}
+
+// normalizeCredentialMode validates the credential mode and the secret file that
+// belongs — or must not belong — to it.
+func (c *Config) normalizeCredentialMode() error {
+	if c.CredentialMode == "" {
+		c.CredentialMode = CredentialModeAgentLocal
+	}
+	c.SecretFile = strings.TrimSpace(c.SecretFile)
+	switch c.CredentialMode {
+	case CredentialModeAgentLocal:
+		if c.SecretFile == "" {
+			return fmt.Errorf("%w: --secret-file is required (or set %s)",
+				ErrInvalidConfig, EnvSecretFile)
+		}
+	case CredentialModeControlPlane:
+		if c.SecretFile != "" {
+			return fmt.Errorf(
+				"%w: --secret-file must not be set with --credential-mode %s: the credential "+
+					"arrives over the tunnel, so a local one would never be read",
+				ErrInvalidConfig, CredentialModeControlPlane)
+		}
+	default:
+		return fmt.Errorf("%w: --credential-mode %q is not supported, want %s or %s",
+			ErrInvalidConfig, c.CredentialMode, CredentialModeAgentLocal, CredentialModeControlPlane)
+	}
+	return nil
+}
+
+// normalizePolicyMode validates the enforcement model. Blocklist mode cannot
+// derive a project from a path no rule describes, so it only runs unscoped —
+// which is also the honest reading of "allow whatever is not denied".
+func (c *Config) normalizePolicyMode() error {
+	if c.PolicyMode == "" {
+		c.PolicyMode = PolicyModeAllowlist
+	}
+	switch c.PolicyMode {
+	case PolicyModeAllowlist:
+		return nil
+	case PolicyModeBlocklist:
+		if !c.AllProjects {
+			return fmt.Errorf(
+				"%w: --policy-mode %s requires --all-projects: an unlisted path carries no "+
+					"project this connector could scope it by",
+				ErrInvalidConfig, PolicyModeBlocklist)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: --policy-mode %q is not supported, want %s or %s",
+			ErrInvalidConfig, c.PolicyMode, PolicyModeAllowlist, PolicyModeBlocklist)
+	}
 }
 
 // normalize validates every setting and canonicalizes the URLs.
@@ -269,7 +360,15 @@ func (c *Config) normalize() error {
 		return err
 	}
 
+	if err := c.normalizeCredentialMode(); err != nil {
+		return err
+	}
+
 	if err := c.normalizeScope(); err != nil {
+		return err
+	}
+
+	if err := c.normalizePolicyMode(); err != nil {
 		return err
 	}
 

@@ -5,6 +5,7 @@ package executor
 import (
 	"net/http"
 
+	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/config"
 	"github.com/ZenfraCloud/zenfra-vcs-connector/tunnel"
 )
 
@@ -73,11 +74,43 @@ var forwardableResponseHeaders = map[string]bool{
 }
 
 // credentialHeader returns the canonical name of the first credential-bearing
-// header found in an inbound request, or "" when there is none.
-func credentialHeader(headers map[string]*tunnel.HeaderValues) string {
+// header found in an inbound request, or "" when there is none. accepted names
+// the one header control_plane mode expects to receive; in the default
+// agent_local mode it is empty and every credential header is refused.
+func credentialHeader(headers map[string]*tunnel.HeaderValues, accepted string) string {
 	for name := range headers {
-		if canonical := http.CanonicalHeaderKey(name); rejectedRequestHeaders[canonical] {
+		canonical := http.CanonicalHeaderKey(name)
+		if canonical == accepted {
+			continue
+		}
+		if rejectedRequestHeaders[canonical] {
 			return canonical
+		}
+	}
+	return ""
+}
+
+// vendorCredentialHeader is the header each vendor's credential travels in. It is
+// the only inbound credential control_plane mode accepts, and the header the
+// credential is injected into in either mode.
+func vendorCredentialHeader(vendor config.Vendor) string {
+	if vendor == config.VendorGitLab {
+		return http.CanonicalHeaderKey(gitLabTokenHeader)
+	}
+	return gitHubAuthHeader
+}
+
+// tunneledCredential returns the value of the accepted credential header, or ""
+// when the control plane sent none.
+func tunneledCredential(headers map[string]*tunnel.HeaderValues, accepted string) string {
+	for name, values := range headers {
+		if http.CanonicalHeaderKey(name) != accepted {
+			continue
+		}
+		for _, value := range values.GetValues() {
+			if value != "" {
+				return value
+			}
 		}
 	}
 	return ""

@@ -684,3 +684,123 @@ func TestConfigStringReportsWebhookState(t *testing.T) {
 		t.Errorf("String() = %q, want the webhook address", on.String())
 	}
 }
+
+func TestLoadDefaultsToAgentLocalCredentialMode(t *testing.T) {
+	cfg, err := Load(validArgs(), env(nil))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.CredentialMode != CredentialModeAgentLocal {
+		t.Errorf("CredentialMode = %q, want %q", cfg.CredentialMode, CredentialModeAgentLocal)
+	}
+	if cfg.PolicyMode != PolicyModeAllowlist {
+		t.Errorf("PolicyMode = %q, want %q", cfg.PolicyMode, PolicyModeAllowlist)
+	}
+}
+
+func TestLoadControlPlaneCredentialModeNeedsNoSecretFile(t *testing.T) {
+	cfg, err := Load([]string{
+		"--gateway-url", "https://api.zenfra.cloud",
+		"--bootstrap-token", "vcsc_abc.def",
+		"--endpoint", "https://gitlab.internal",
+		"--vendor", "gitlab",
+		"--allowed-projects", "eng/platform",
+		"--credential-mode", "control_plane",
+	}, env(nil))
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+	if cfg.CredentialMode != CredentialModeControlPlane {
+		t.Errorf("CredentialMode = %q", cfg.CredentialMode)
+	}
+	if !strings.Contains(cfg.String(), "credential-mode=control_plane") {
+		t.Errorf("String() = %q, want it to name the credential mode", cfg.String())
+	}
+}
+
+func TestLoadControlPlaneCredentialModeRejectsSecretFile(t *testing.T) {
+	_, err := Load(append(validArgs(), "--credential-mode", "control_plane"), env(nil))
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("Load() error = %v, want ErrInvalidConfig", err)
+	}
+	if !strings.Contains(err.Error(), "--secret-file") {
+		t.Errorf("error = %q, want it to name --secret-file", err)
+	}
+}
+
+func TestLoadRejectsUnknownCredentialMode(t *testing.T) {
+	_, err := Load(append(validArgs(), "--credential-mode", "whatever"), env(nil))
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("Load() error = %v, want ErrInvalidConfig", err)
+	}
+}
+
+func TestLoadCredentialModeFromEnv(t *testing.T) {
+	cfg, err := Load([]string{
+		"--gateway-url", "https://api.zenfra.cloud",
+		"--bootstrap-token", "vcsc_abc.def",
+		"--endpoint", "https://gitlab.internal",
+		"--vendor", "gitlab",
+		"--allowed-projects", "eng/platform",
+	}, env(map[string]string{EnvCredentialMode: "control_plane"}))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.CredentialMode != CredentialModeControlPlane {
+		t.Errorf("CredentialMode = %q", cfg.CredentialMode)
+	}
+}
+
+func TestLoadAgentLocalStillRequiresSecretFile(t *testing.T) {
+	_, err := Load([]string{
+		"--gateway-url", "https://api.zenfra.cloud",
+		"--bootstrap-token", "vcsc_abc.def",
+		"--endpoint", "https://gitlab.internal",
+		"--vendor", "gitlab",
+		"--allowed-projects", "eng/platform",
+	}, env(nil))
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("Load() error = %v, want ErrInvalidConfig", err)
+	}
+	if !strings.Contains(err.Error(), "--secret-file") {
+		t.Errorf("error = %q, want it to name --secret-file", err)
+	}
+}
+
+func TestLoadBlocklistPolicyModeRequiresAllProjects(t *testing.T) {
+	_, err := Load(append(validArgs(), "--policy-mode", "blocklist"), env(nil))
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("Load() error = %v, want ErrInvalidConfig", err)
+	}
+	if !strings.Contains(err.Error(), "--all-projects") {
+		t.Errorf("error = %q, want it to name --all-projects", err)
+	}
+}
+
+func TestLoadBlocklistPolicyMode(t *testing.T) {
+	cfg, err := Load([]string{
+		"--gateway-url", "https://api.zenfra.cloud",
+		"--bootstrap-token", "vcsc_abc.def",
+		"--endpoint", "https://gitlab.internal",
+		"--vendor", "gitlab",
+		"--secret-file", "/etc/zenfra/gitlab-token",
+		"--all-projects",
+		"--policy-mode", "blocklist",
+	}, env(nil))
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+	if cfg.PolicyMode != PolicyModeBlocklist {
+		t.Errorf("PolicyMode = %q", cfg.PolicyMode)
+	}
+	if !strings.Contains(cfg.String(), "policy-mode=blocklist") {
+		t.Errorf("String() = %q, want it to name the policy mode", cfg.String())
+	}
+}
+
+func TestLoadRejectsUnknownPolicyMode(t *testing.T) {
+	_, err := Load(append(validArgs(), "--policy-mode", "yolo"), env(nil))
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("Load() error = %v, want ErrInvalidConfig", err)
+	}
+}

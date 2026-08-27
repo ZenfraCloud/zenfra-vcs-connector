@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -294,5 +295,31 @@ func TestServeWebhooksEmptySecretIsTerminal(t *testing.T) {
 	cfg := webhookConfig(t, "127.0.0.1:0", secretFile)
 	if _, err := serveWebhooks(cfg, &stubRelay{}, newLogger("info")); !errors.Is(err, config.ErrInvalidConfig) {
 		t.Fatalf("want ErrInvalidConfig, got %v", err)
+	}
+}
+
+func TestWarnOptionalModesIsSilentOnTheDefaults(t *testing.T) {
+	var buf bytes.Buffer
+	warnOptionalModes(&config.Config{
+		CredentialMode: config.CredentialModeAgentLocal,
+		PolicyMode:     config.PolicyModeAllowlist,
+	}, slog.New(slog.NewJSONHandler(&buf, nil)))
+	if buf.Len() != 0 {
+		t.Fatalf("default configuration warned:\n%s", buf.String())
+	}
+}
+
+func TestWarnOptionalModesWarnsOnTheOptIns(t *testing.T) {
+	var buf bytes.Buffer
+	warnOptionalModes(&config.Config{
+		CredentialMode: config.CredentialModeControlPlane,
+		PolicyMode:     config.PolicyModeBlocklist,
+	}, slog.New(slog.NewJSONHandler(&buf, nil)))
+
+	logged := buf.String()
+	for _, want := range []string{"WARN", "control_plane", "blocklist"} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("warning output %q is missing %q", logged, want)
+		}
 	}
 }

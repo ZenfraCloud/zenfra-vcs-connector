@@ -27,6 +27,14 @@ connector:
   allProjects: false
   interactiveConnections: 3
   logLevel: info
+  # Opt-in modes — see docs/optional-modes.md before changing either.
+  # agent_local (default): the credential is the mounted secret file and never
+  # leaves this network. control_plane: Zenfra stores it and sends it over the
+  # tunnel; no credential is mounted, and the Zenfra integration must be created
+  # with the same credential_mode.
+  credentialMode: agent_local
+  # allowlist (default) | blocklist. Blocklist requires allProjects.
+  policyMode: allowlist
 
 # Bootstrap token and the upstream VCS credential come from a Secret you create
 # yourself — the chart never templates secret material, so the credential is not
