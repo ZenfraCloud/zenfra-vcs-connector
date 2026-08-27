@@ -1,0 +1,11 @@
+The Zenfra VCS Connector is starting {{ .Values.replicaCount }} instance(s) against
+{{ .Values.connector.endpoint }} ({{ .Values.connector.vendor }}).
+
+Each pod dials out to {{ .Values.connector.gatewayUrl }}; nothing listens for inbound
+traffic{{ if .Values.metrics.enabled }} except the metrics endpoint on port {{ .Values.metrics.port }}{{ end }}.
+
+Check registration:
+  kubectl logs -l app.kubernetes.io/instance={{ .Release.Name }} -f
+
+Then confirm the connector reports healthy in Zenfra:
+  GET {{ .Values.connector.gatewayUrl }}/api/v1/vcs-connectors

@@ -1,0 +1,21 @@
+{{- if and .Values.metrics.enabled .Values.metrics.service.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "zenfra-vcs-connector.fullname" . }}-metrics
+  labels:
+    {{- include "zenfra-vcs-connector.labels" . | nindent 4 }}
+  {{- with .Values.metrics.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: {{ .Values.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    {{- include "zenfra-vcs-connector.selectorLabels" . | nindent 4 }}
+{{- end }}

@@ -1,0 +1,16 @@
+apiVersion: v2
+name: zenfra-vcs-connector
+description: Outbound-only connector that tunnels allowlisted VCS API calls from a private network to Zenfra
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/ZenfraCloud/zenfra-vcs-connector
+sources:
+  - https://github.com/ZenfraCloud/zenfra-vcs-connector
+keywords:
+  - zenfra
+  - vcs
+  - gitlab
+  - github
+  - bitbucket
+  - azure-devops

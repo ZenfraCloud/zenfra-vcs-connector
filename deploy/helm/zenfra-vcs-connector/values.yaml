@@ -1,0 +1,89 @@
+# Values for the Zenfra VCS Connector.
+# Required: connector.gatewayUrl, connector.endpoint, secret.name.
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/zenfracloud/zenfra-vcs-connector
+  # Defaults to the chart appVersion. Pin a digest or tag for production.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+connector:
+  # zenfra-api base URL the connector dials out to.
+  gatewayUrl: ""
+  # Upstream VCS base URL. Azure DevOps: include the collection.
+  endpoint: ""
+  # gitlab | github | bitbucket | azure_devops
+  vendor: gitlab
+  # Pinned origin for GitHub Enterprise archive downloads. Empty = endpoint.
+  codeloadEndpoint: ""
+  # Project IDs or paths this connector may serve. Required unless allProjects.
+  allowedProjects: []
+  allProjects: false
+  interactiveConnections: 3
+  logLevel: info
+
+# Bootstrap token and the upstream VCS credential come from a Secret you create
+# yourself — the chart never templates secret material, so the credential is not
+# in your values file, your git history or `helm get values` output.
+#
+#   kubectl create secret generic zenfra-vcs-connector \
+#     --from-literal=bootstrap-token=vcsc_... \
+#     --from-literal=credential=glpat-...
+secret:
+  name: ""
+  bootstrapTokenKey: bootstrap-token
+  credentialKey: credential
+  # Where the credential file is mounted. The connector reads it per request and
+  # never sends it to the control plane.
+  mountPath: /etc/zenfra-vcs-connector/secrets
+
+# Trust roots for the two TLS legs, from a ConfigMap you create. Private VCS is
+# usually signed by an internal CA the system roots do not carry.
+caBundle:
+  configMapName: ""
+  # Key holding the PEM bundle for the gateway leg (leave empty to use system roots).
+  gatewayKey: ""
+  # Key holding the PEM bundle for the upstream VCS leg.
+  upstreamKey: ""
+  mountPath: /etc/zenfra-vcs-connector/ca
+
+# Corporate egress proxy. The connector honours the standard Go proxy variables.
+proxy:
+  httpProxy: ""
+  httpsProxy: ""
+  noProxy: ""
+
+metrics:
+  enabled: false
+  port: 9090
+  service:
+    enabled: false
+    annotations: {}
+
+# Extra environment variables, e.g. further ZENFRA_VCS_CONNECTOR_* overrides.
+extraEnv: []
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []

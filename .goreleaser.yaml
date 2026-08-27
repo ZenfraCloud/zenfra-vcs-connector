@@ -1,0 +1,72 @@
+# ABOUTME: Release build for the customer-run Zenfra VCS Connector.
+# ABOUTME: Static linux/amd64+arm64 binaries, SHA256SUMS and multi-arch container image.
+version: 2
+project_name: zenfra-vcs-connector
+
+# GOWORK=off everywhere: the connector must build from its own module alone, the
+# way it will once it ships from the public repo.
+env:
+  - GOWORK=off
+  - CGO_ENABLED=0
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: connector
+    main: ./cmd/zenfra-vcs-connector
+    binary: zenfra-vcs-connector
+    goos: [linux]
+    goarch: [amd64, arm64]
+    # -trimpath and a commit-derived mod timestamp are what make the build
+    # reproducible: scripts/verify-reproducible-build.sh asserts the same flags
+    # produce byte-identical binaries from two different source paths.
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: connector
+    ids: [connector]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # LICENSE joins this list when the module moves to its public repo.
+    files:
+      - README.md
+
+checksum:
+  name_template: SHA256SUMS
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  disable: true
+
+dockers_v2:
+  - id: connector
+    ids: [connector]
+    dockerfile: deploy/docker/Dockerfile.release
+    platforms: [linux/amd64, linux/arm64]
+    images:
+      - ghcr.io/zenfracloud/zenfra-vcs-connector
+    tags:
+      - "{{ .Version }}"
+      - latest
+    labels:
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.source: https://github.com/ZenfraCloud/zenfra-vcs-connector
+      org.opencontainers.image.licenses: Apache-2.0
+
+# The monorepo tags connector releases `vcs-connector/vX.Y.Z`, which is not a tag
+# goreleaser can publish a release for. The workflow creates the GitHub release
+# and uploads dist/ itself; goreleaser only builds and pushes images.
+release:
+  disable: true

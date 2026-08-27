@@ -1,0 +1,160 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "zenfra-vcs-connector.fullname" . }}
+  labels:
+    {{- include "zenfra-vcs-connector.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "zenfra-vcs-connector.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "zenfra-vcs-connector.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "zenfra-vcs-connector.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: connector
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: ZENFRA_VCS_CONNECTOR_GATEWAY_URL
+              value: {{ required "connector.gatewayUrl is required" .Values.connector.gatewayUrl | quote }}
+            - name: ZENFRA_VCS_CONNECTOR_ENDPOINT
+              value: {{ required "connector.endpoint is required" .Values.connector.endpoint | quote }}
+            - name: ZENFRA_VCS_CONNECTOR_VENDOR
+              value: {{ .Values.connector.vendor | quote }}
+            {{- with .Values.connector.codeloadEndpoint }}
+            - name: ZENFRA_VCS_CONNECTOR_CODELOAD_ENDPOINT
+              value: {{ . | quote }}
+            {{- end }}
+            # The bootstrap token authenticates registration only; it is never
+            # written to disk and never appears in the manifest.
+            - name: ZENFRA_VCS_CONNECTOR_BOOTSTRAP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secret.name is required" .Values.secret.name | quote }}
+                  key: {{ .Values.secret.bootstrapTokenKey | quote }}
+            # The upstream VCS credential stays a file: it is read per request
+            # and never leaves the customer network.
+            - name: ZENFRA_VCS_CONNECTOR_SECRET_FILE
+              value: {{ include "zenfra-vcs-connector.secretFilePath" . | quote }}
+            {{- if .Values.connector.allProjects }}
+            - name: ZENFRA_VCS_CONNECTOR_ALL_PROJECTS
+              value: "true"
+            {{- else }}
+            - name: ZENFRA_VCS_CONNECTOR_ALLOWED_PROJECTS
+              value: {{ required "connector.allowedProjects is required unless connector.allProjects is set" (join "," .Values.connector.allowedProjects) | quote }}
+            {{- end }}
+            - name: ZENFRA_VCS_CONNECTOR_INTERACTIVE_CONNECTIONS
+              value: {{ .Values.connector.interactiveConnections | quote }}
+            - name: ZENFRA_VCS_CONNECTOR_LOG_LEVEL
+              value: {{ .Values.connector.logLevel | quote }}
+            {{- if .Values.metrics.enabled }}
+            - name: ZENFRA_VCS_CONNECTOR_METRICS_ADDR
+              value: "0.0.0.0:{{ .Values.metrics.port }}"
+            {{- end }}
+            {{- if .Values.caBundle.gatewayKey }}
+            - name: ZENFRA_VCS_CONNECTOR_CA_BUNDLE
+              value: "{{ trimSuffix "/" .Values.caBundle.mountPath }}/{{ .Values.caBundle.gatewayKey }}"
+            {{- end }}
+            {{- if .Values.caBundle.upstreamKey }}
+            - name: ZENFRA_VCS_CONNECTOR_UPSTREAM_CA_BUNDLE
+              value: "{{ trimSuffix "/" .Values.caBundle.mountPath }}/{{ .Values.caBundle.upstreamKey }}"
+            {{- end }}
+            {{- with .Values.proxy.httpProxy }}
+            - name: HTTP_PROXY
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.proxy.httpsProxy }}
+            - name: HTTPS_PROXY
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.proxy.noProxy }}
+            - name: NO_PROXY
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if .Values.metrics.enabled }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+          # The connector serves no health endpoint of its own; the metrics
+          # listener is the only signal that the process is still answering.
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          {{- end }}
+          volumeMounts:
+            - name: connector-secret
+              mountPath: {{ .Values.secret.mountPath | quote }}
+              readOnly: true
+            {{- if .Values.caBundle.configMapName }}
+            - name: ca-bundle
+              mountPath: {{ .Values.caBundle.mountPath | quote }}
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: connector-secret
+          secret:
+            secretName: {{ .Values.secret.name | quote }}
+            # 0440 + fsGroup: the file is group-readable by the connector UID, nothing else.
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.secret.credentialKey | quote }}
+                path: {{ .Values.secret.credentialKey | quote }}
+        {{- if .Values.caBundle.configMapName }}
+        - name: ca-bundle
+          configMap:
+            name: {{ .Values.caBundle.configMapName | quote }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
