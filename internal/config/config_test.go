@@ -211,11 +211,11 @@ func TestLoadMisconfigIsFatalWithClearMessage(t *testing.T) {
 				"--gateway-url", "https://api.zenfra.cloud",
 				"--bootstrap-token", "vcsc_abc.def",
 				"--endpoint", "https://gitlab.internal",
-				"--vendor", "github",
+				"--vendor", "bitbucket",
 				"--secret-file", "/etc/zenfra/gitlab-token",
 				"--all-projects",
 			},
-			want: []string{"--vendor", "github", string(VendorGitLab)},
+			want: []string{"--vendor", "bitbucket", string(VendorGitLab), string(VendorGitHub)},
 		},
 		{
 			name: "missing secret file",
@@ -366,4 +366,99 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// githubArgs is a complete GitHub Enterprise command line.
+func githubArgs(extra ...string) []string {
+	return append([]string{
+		"--gateway-url", "https://api.zenfra.cloud",
+		"--bootstrap-token", "vcsc_abc.def",
+		"--endpoint", "https://ghe.internal",
+		"--vendor", "github",
+		"--secret-file", "/etc/zenfra/ghe-token",
+		"--all-projects",
+	}, extra...)
+}
+
+func TestLoadAcceptsGitHubEnterpriseVendor(t *testing.T) {
+	cfg, err := Load(githubArgs(), env(nil))
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+	if cfg.Vendor != VendorGitHub {
+		t.Errorf("Vendor = %q, want %q", cfg.Vendor, VendorGitHub)
+	}
+	// An unset codeload endpoint means the archive origin is the primary host,
+	// which is how GitHub Enterprise serves /_codeload by default.
+	if cfg.CodeloadEndpoint != cfg.Endpoint {
+		t.Errorf("CodeloadEndpoint = %q, want it to default to the endpoint %q",
+			cfg.CodeloadEndpoint, cfg.Endpoint)
+	}
+}
+
+func TestLoadCanonicalizesCodeloadEndpoint(t *testing.T) {
+	cfg, err := Load(githubArgs("--codeload-endpoint", "https://Codeload.GHE.Internal:8443/"), env(nil))
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+	if want := "https://codeload.ghe.internal:8443"; cfg.CodeloadEndpoint != want {
+		t.Errorf("CodeloadEndpoint = %q, want %q", cfg.CodeloadEndpoint, want)
+	}
+}
+
+func TestLoadReadsCodeloadEndpointFromEnvironment(t *testing.T) {
+	cfg, err := Load(githubArgs(), env(map[string]string{
+		EnvCodeloadEndpoint: "https://codeload.ghe.internal",
+	}))
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+	if want := "https://codeload.ghe.internal"; cfg.CodeloadEndpoint != want {
+		t.Errorf("CodeloadEndpoint = %q, want %q", cfg.CodeloadEndpoint, want)
+	}
+}
+
+func TestLoadCodeloadMisconfigIsFatal(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "codeload endpoint on a vendor without one",
+			args: append(validArgs(), "--codeload-endpoint", "https://codeload.internal"),
+			want: []string{"--codeload-endpoint", string(VendorGitHub)},
+		},
+		{
+			name: "codeload endpoint is not a URL",
+			args: githubArgs("--codeload-endpoint", "codeload.ghe.internal"),
+			want: []string{"--codeload-endpoint", "scheme"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(tt.args, env(nil))
+			if err == nil {
+				t.Fatal("Load() error = nil, want a terminal config error")
+			}
+			if !errors.Is(err, ErrInvalidConfig) {
+				t.Errorf("Load() error = %v, want ErrInvalidConfig", err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("Load() error = %q, want it to mention %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestConfigStringNamesTheCodeloadEndpoint(t *testing.T) {
+	cfg, err := Load(githubArgs("--codeload-endpoint", "https://codeload.ghe.internal"), env(nil))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !strings.Contains(cfg.String(), "codeload=https://codeload.ghe.internal") {
+		t.Errorf("String() = %q, want it to name the codeload endpoint", cfg.String())
+	}
 }

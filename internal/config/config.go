@@ -16,8 +16,26 @@ import (
 // Vendor is the VCS flavour this connector fronts.
 type Vendor string
 
-// VendorGitLab is the only vendor supported in Phase 1.
-const VendorGitLab Vendor = "gitlab"
+const (
+	// VendorGitLab is a self-managed GitLab instance.
+	VendorGitLab Vendor = "gitlab"
+	// VendorGitHub is a self-managed GitHub Enterprise Server instance. GitHub.com
+	// needs no connector, so the REST surface here is the /api/v3 one.
+	VendorGitHub Vendor = "github"
+)
+
+// supportedVendors is the set --vendor accepts, in the order the error lists them.
+var supportedVendors = []Vendor{VendorGitLab, VendorGitHub}
+
+// supported reports whether v has a compiled allowlist.
+func (v Vendor) supported() bool {
+	for _, candidate := range supportedVendors {
+		if v == candidate {
+			return true
+		}
+	}
+	return false
+}
 
 // DefaultInteractiveConnections is the interactive stream count per instance; one
 // bulk stream is always opened alongside them.
@@ -28,6 +46,7 @@ const (
 	EnvGatewayURL             = "ZENFRA_VCS_CONNECTOR_GATEWAY_URL"
 	EnvBootstrapToken         = "ZENFRA_VCS_CONNECTOR_BOOTSTRAP_TOKEN" //nolint:gosec // env var name
 	EnvEndpoint               = "ZENFRA_VCS_CONNECTOR_ENDPOINT"
+	EnvCodeloadEndpoint       = "ZENFRA_VCS_CONNECTOR_CODELOAD_ENDPOINT"
 	EnvVendor                 = "ZENFRA_VCS_CONNECTOR_VENDOR"
 	EnvSecretFile             = "ZENFRA_VCS_CONNECTOR_SECRET_FILE" //nolint:gosec // env var name
 	EnvAllowedProjects        = "ZENFRA_VCS_CONNECTOR_ALLOWED_PROJECTS"
@@ -63,6 +82,12 @@ type Config struct {
 	// the tunnel upgrade.
 	Vendor   Vendor
 	Endpoint string
+	// CodeloadEndpoint is the pinned second origin GitHub archive downloads are
+	// served from. It defaults to Endpoint, which is where GitHub Enterprise
+	// serves /_codeload; a cluster with a separate download host sets it. The
+	// connector never derives this host from a redirect it was sent — that would
+	// be a free rewrite of where a request lands.
+	CodeloadEndpoint string
 	// SecretFile holds the upstream VCS credential, read at request time and
 	// never sent to the control plane.
 	SecretFile string
@@ -81,10 +106,14 @@ func (c *Config) String() string {
 	if !c.AllProjects {
 		scope = fmt.Sprintf("projects=%s", strings.Join(c.AllowedProjects, ","))
 	}
+	codeload := ""
+	if c.CodeloadEndpoint != "" && c.CodeloadEndpoint != c.Endpoint {
+		codeload = " codeload=" + c.CodeloadEndpoint
+	}
 	return fmt.Sprintf(
-		"gateway=%s vendor=%s endpoint=%s instance=%s %s interactive=%d secret-file=%s "+
+		"gateway=%s vendor=%s endpoint=%s%s instance=%s %s interactive=%d secret-file=%s "+
 			"ca-bundle=%s upstream-ca-bundle=%s",
-		c.GatewayURL, c.Vendor, c.Endpoint, c.InstanceKey, scope,
+		c.GatewayURL, c.Vendor, c.Endpoint, codeload, c.InstanceKey, scope,
 		c.InteractiveConnections, c.SecretFile, c.CABundle, c.UpstreamCABundle,
 	)
 }
@@ -108,8 +137,10 @@ func Load(args []string, getenv func(string) string) (*Config, error) {
 		"connector bootstrap token (vcsc_...)")
 	fs.StringVar(&cfg.Endpoint, "endpoint", getenv(EnvEndpoint),
 		"upstream VCS base URL, e.g. https://gitlab.internal")
+	fs.StringVar(&cfg.CodeloadEndpoint, "codeload-endpoint", getenv(EnvCodeloadEndpoint),
+		"pinned origin serving GitHub archive downloads (default: the endpoint)")
 	fs.StringVar((*string)(&cfg.Vendor), "vendor", getenv(EnvVendor),
-		"upstream VCS vendor (gitlab)")
+		"upstream VCS vendor (gitlab, github)")
 	fs.StringVar(&cfg.SecretFile, "secret-file", getenv(EnvSecretFile),
 		"path to the file holding the upstream VCS credential")
 	fs.StringVar(&allowedProjects, "allowed-projects", getenv(EnvAllowedProjects),
@@ -156,9 +187,9 @@ func (c *Config) normalize() error {
 		}
 	}
 
-	if c.Vendor != VendorGitLab {
-		return fmt.Errorf("%w: --vendor %q is not supported, want %q",
-			ErrInvalidConfig, c.Vendor, VendorGitLab)
+	if !c.Vendor.supported() {
+		return fmt.Errorf("%w: --vendor %q is not supported, want one of %s",
+			ErrInvalidConfig, c.Vendor, vendorList())
 	}
 
 	gateway, err := canonicalizeURL(c.GatewayURL)
@@ -172,6 +203,10 @@ func (c *Config) normalize() error {
 		return fmt.Errorf("%w: --endpoint %w", ErrInvalidConfig, err)
 	}
 	c.Endpoint = endpoint
+
+	if err := c.normalizeCodeloadEndpoint(); err != nil {
+		return err
+	}
 
 	switch {
 	case c.AllProjects && len(c.AllowedProjects) > 0:
@@ -196,6 +231,38 @@ func (c *Config) normalize() error {
 		c.InstanceKey = host
 	}
 	return nil
+}
+
+// normalizeCodeloadEndpoint validates the pinned archive origin. Only GitHub has
+// one; for every other vendor a value is a misunderstanding worth failing on
+// rather than silently ignoring.
+func (c *Config) normalizeCodeloadEndpoint() error {
+	if c.Vendor != VendorGitHub {
+		if strings.TrimSpace(c.CodeloadEndpoint) != "" {
+			return fmt.Errorf("%w: --codeload-endpoint is only valid with --vendor %s",
+				ErrInvalidConfig, VendorGitHub)
+		}
+		return nil
+	}
+	if strings.TrimSpace(c.CodeloadEndpoint) == "" {
+		c.CodeloadEndpoint = c.Endpoint
+		return nil
+	}
+	codeload, err := canonicalizeURL(c.CodeloadEndpoint)
+	if err != nil {
+		return fmt.Errorf("%w: --codeload-endpoint %w", ErrInvalidConfig, err)
+	}
+	c.CodeloadEndpoint = codeload
+	return nil
+}
+
+// vendorList renders the supported vendors for an error message.
+func vendorList() string {
+	names := make([]string, 0, len(supportedVendors))
+	for _, vendor := range supportedVendors {
+		names = append(names, string(vendor))
+	}
+	return strings.Join(names, ", ")
 }
 
 // canonicalizeURL normalizes a base URL the same way the control plane does, so a

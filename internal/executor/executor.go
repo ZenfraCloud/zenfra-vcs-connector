@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -22,10 +23,17 @@ import (
 	"github.com/ZenfraCloud/zenfra-vcs-connector/tunnel"
 )
 
-// gitLabTokenHeader carries the personal access token GitLab expects. The value
-// is read from the local secret file per request and never leaves this process
-// except on the upstream leg.
-const gitLabTokenHeader = "PRIVATE-TOKEN"
+// Credential headers per vendor. The value is read from the local secret file per
+// request and never leaves this process except on the upstream leg.
+const (
+	gitLabTokenHeader = "PRIVATE-TOKEN"
+	gitHubAuthHeader  = "Authorization"
+	gitHubAuthScheme  = "Bearer "
+)
+
+// maxRedirectsFollowed is the number of redirects the connector resolves itself:
+// exactly one, onto a pinned origin, for the rules that declare it.
+const maxRedirectsFollowed = 1
 
 // userAgent identifies the connector to the upstream VCS.
 const userAgent = "zenfra-vcs-connector"
@@ -87,7 +95,10 @@ type Responder interface {
 
 // Executor serves tunneled requests against one upstream VCS endpoint.
 type Executor struct {
-	endpoint   string
+	vendor config.Vendor
+	// origins are the base URLs the operator pinned at startup, keyed by the
+	// origin a policy rule names. Nothing on the wire can add or change one.
+	origins    map[policy.Origin]string
 	secretFile string
 	engine     *policy.Engine
 	client     *http.Client
@@ -127,8 +138,17 @@ func New(cfg *config.Config, engine *policy.Engine, audit *slog.Logger) (*Execut
 		transport.TLSClientConfig = tlsCfg
 	}
 
+	origins := map[policy.Origin]string{
+		policy.OriginPrimary:  strings.TrimSuffix(cfg.Endpoint, "/"),
+		policy.OriginCodeload: strings.TrimSuffix(cfg.Endpoint, "/"),
+	}
+	if cfg.CodeloadEndpoint != "" {
+		origins[policy.OriginCodeload] = strings.TrimSuffix(cfg.CodeloadEndpoint, "/")
+	}
+
 	return &Executor{
-		endpoint:   strings.TrimSuffix(cfg.Endpoint, "/"),
+		vendor:     cfg.Vendor,
+		origins:    origins,
 		secretFile: cfg.SecretFile,
 		engine:     engine,
 		limits:     DefaultLimits(),
@@ -232,6 +252,18 @@ func (e *Executor) Handle(ctx context.Context, req *connect.Request, w Responder
 	phase = phaseCompleted
 	rec.Status = resp.StatusCode
 
+	for followed := 0; dec.RedirectsTo != "" && followed < maxRedirectsFollowed &&
+		isRedirect(resp.StatusCode); followed++ {
+		next := e.followPinnedRedirect(callCtx, &dec, resp, w, rec)
+		if next == nil {
+			return
+		}
+		// Close the redirect before replacing it; the deferred close follows the
+		// variable and would otherwise only reach the last response.
+		_ = resp.Body.Close()
+		resp = next
+	}
+
 	e.stream(ctx, &dec, head, resp, w, rec, phase)
 }
 
@@ -262,7 +294,11 @@ func (e *Executor) readRequestBody(req *connect.Request, w Responder, rec *audit
 func (e *Executor) buildRequest(
 	ctx context.Context, dec *policy.Decision, head *tunnel.HTTPRequest, body []byte,
 ) (*http.Request, error) {
-	target := e.endpoint + dec.Path
+	origin, ok := e.origins[dec.Origin]
+	if !ok {
+		return nil, fmt.Errorf("no endpoint is configured for origin %q", dec.Origin)
+	}
+	target := origin + dec.Path
 	if dec.Query != "" {
 		target += "?" + dec.Query
 	}
@@ -291,13 +327,92 @@ func (e *Executor) buildRequest(
 	req.Header.Set("User-Agent", userAgent)
 
 	// The credential is read here and only here: after the allowlist approved the
-	// request, and never for a denied one.
-	token, err := readSecret(e.secretFile)
-	if err != nil {
-		return nil, err
+	// request, and never for a denied one. An alternate origin is a different host
+	// in general, and its URL is already authorized by the redirect that named it,
+	// so the credential stays on the primary leg.
+	if dec.Origin == policy.OriginPrimary {
+		token, err := readSecret(e.secretFile)
+		if err != nil {
+			return nil, err
+		}
+		e.authorize(req, token)
+	}
+	return req, nil
+}
+
+// authorize attaches the vendor's credential header.
+func (e *Executor) authorize(req *http.Request, token string) {
+	if e.vendor == config.VendorGitHub {
+		req.Header.Set(gitHubAuthHeader, gitHubAuthScheme+token)
+		return
 	}
 	req.Header.Set(gitLabTokenHeader, token)
-	return req, nil
+}
+
+// followPinnedRedirect resolves a redirect the matched rule allows. Only the path
+// and query of the Location are used: the request is re-evaluated against the
+// allowlist and sent to the origin the operator pinned, so a Location naming
+// another host moves nothing. Returns the replacement response, or nil after
+// having failed the exchange.
+func (e *Executor) followPinnedRedirect(
+	ctx context.Context, dec *policy.Decision, resp *http.Response, w Responder, rec *auditRecord,
+) *http.Response {
+	location := resp.Header.Get("Location")
+	if location == "" {
+		rec.Reason = "upstream redirect carried no Location"
+		e.fail(w, rec, tunnel.ErrCodeUpstreamHTTP, rec.Reason, false, tunnel.ErrorOrigin_ERROR_ORIGIN_UPSTREAM)
+		return nil
+	}
+	target, err := url.Parse(location)
+	if err != nil {
+		rec.Reason = "upstream redirect Location is not a URL"
+		e.fail(w, rec, tunnel.ErrCodeUpstreamHTTP, rec.Reason, false, tunnel.ErrorOrigin_ERROR_ORIGIN_UPSTREAM)
+		return nil
+	}
+
+	next := e.engine.Evaluate(http.MethodGet, target.EscapedPath(), target.RawQuery)
+	if !next.Allowed || next.Origin != dec.RedirectsTo {
+		rec.Reason = redirectDenialReason(&next, dec.RedirectsTo)
+		e.fail(w, rec, tunnel.ErrCodePolicyDenied, rec.Reason, false, tunnel.ErrorOrigin_ERROR_ORIGIN_CONNECTOR)
+		return nil
+	}
+	rec.RedirectOrigin = string(next.Origin)
+
+	followed, err := e.buildRequest(ctx, &next, nil, nil)
+	if err != nil {
+		rec.Reason = err.Error()
+		e.fail(w, rec, tunnel.ErrCodeProtocol, rec.Reason, false, tunnel.ErrorOrigin_ERROR_ORIGIN_CONNECTOR)
+		return nil
+	}
+	next2, err := e.client.Do(followed)
+	if err != nil {
+		code, message := classifyUpstreamError(err, ctx)
+		rec.Reason = message
+		e.fail(w, rec, code, message, code != tunnel.ErrCodeUpstreamTLS, tunnel.ErrorOrigin_ERROR_ORIGIN_UPSTREAM)
+		return nil
+	}
+	rec.Status = next2.StatusCode
+	return next2
+}
+
+// redirectDenialReason explains a refused redirect without echoing the Location:
+// an upstream-controlled string has no place in the connector's audit log.
+func redirectDenialReason(next *policy.Decision, want policy.Origin) string {
+	if !next.Allowed {
+		return "upstream redirect target is not allowlisted: " + next.Reason
+	}
+	return fmt.Sprintf("upstream redirect target belongs to origin %q, want %q", next.Origin, want)
+}
+
+// isRedirect reports whether a status carries a Location worth resolving.
+func isRedirect(status int) bool {
+	switch status {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		return true
+	default:
+		return false
+	}
 }
 
 // stream forwards the response head and body back through the tunnel.

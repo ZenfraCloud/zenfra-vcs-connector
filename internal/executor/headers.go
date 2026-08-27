@@ -31,6 +31,9 @@ var rejectedRequestHeaders = map[string]bool{
 var forwardableRequestHeaders = map[string]bool{
 	"Accept":       true,
 	"Content-Type": true,
+	// GitHub's API version pin. Dropping it would silently serve whatever the
+	// upstream defaults to, which is the version negotiation the caller opted out of.
+	"X-Github-Api-Version": true,
 }
 
 // forwardableResponseHeaders is what travels back. Set-Cookie and every

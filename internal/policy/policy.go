@@ -15,6 +15,18 @@ import (
 	"github.com/ZenfraCloud/zenfra-vcs-connector/tunnel"
 )
 
+// Origin names one of the connector's pinned upstream endpoints. Every origin is
+// configured by the operator at startup; nothing on the wire can introduce one.
+type Origin string
+
+const (
+	// OriginPrimary is --endpoint: the VCS API itself.
+	OriginPrimary Origin = "primary"
+	// OriginCodeload is --codeload-endpoint: the origin GitHub serves repository
+	// archives from, which may be a different host than the API.
+	OriginCodeload Origin = "codeload"
+)
+
 // Rule is one allowlist entry. The pattern is anchored and matched against the
 // canonical path; capture group 1 holds the project identifier when the rule is
 // project-scoped.
@@ -24,6 +36,11 @@ type Rule struct {
 	// Purpose is the human-readable operation name used in connector logs.
 	Purpose string
 	Method  string
+	// Origin is the pinned endpoint this rule's request is sent to.
+	Origin Origin
+	// RedirectsTo names the pinned origin a 3xx answer to this rule may be
+	// followed to. Empty — the default — means redirects are never followed.
+	RedirectsTo Origin
 
 	pattern *regexp.Regexp
 	// capturesProject marks rules whose pattern captures a project identifier.
@@ -42,6 +59,10 @@ type Decision struct {
 	Method  string
 	Path    string
 	Query   string
+	// Origin is the pinned endpoint the approved request must be sent to, and
+	// RedirectsTo the only origin a redirect from it may be followed to.
+	Origin      Origin
+	RedirectsTo Origin
 	// Reason states why a denied request was denied; empty when allowed.
 	Reason string
 }
@@ -67,13 +88,19 @@ type Engine struct {
 
 // NewEngine compiles the allowlist for the configured vendor.
 func NewEngine(cfg *config.Config) (*Engine, error) {
-	if cfg.Vendor != config.VendorGitLab {
-		return nil, fmt.Errorf("policy: no allowlist for vendor %q, want %q",
-			cfg.Vendor, config.VendorGitLab)
+	var rules []Rule
+	switch cfg.Vendor {
+	case config.VendorGitLab:
+		rules = gitLabRules()
+	case config.VendorGitHub:
+		rules = gitHubRules()
+	default:
+		return nil, fmt.Errorf("policy: no allowlist for vendor %q, want %q or %q",
+			cfg.Vendor, config.VendorGitLab, config.VendorGitHub)
 	}
 	e := &Engine{
 		vendor:      cfg.Vendor,
-		rules:       gitLabRules(),
+		rules:       rules,
 		projects:    make(map[string]struct{}, len(cfg.AllowedProjects)),
 		allProjects: cfg.AllProjects,
 	}
@@ -126,6 +153,7 @@ func (e *Engine) Evaluate(method, rawPath, rawQuery string) Decision {
 	}
 
 	dec.RuleID, dec.Purpose, dec.Project = rule.ID, rule.Purpose, project
+	dec.Origin, dec.RedirectsTo = rule.Origin, rule.RedirectsTo
 	if !e.projectAllowed(rule, project) {
 		dec.Reason = fmt.Sprintf("project %q is outside --allowed-projects (rule %s)",
 			project, rule.ID)
@@ -194,7 +222,8 @@ func policyHash(vendor config.Vendor, rules []Rule) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "vendor=%s\n", vendor)
 	for _, rule := range rules {
-		fmt.Fprintf(&b, "%s %s %s\n", rule.Method, rule.pattern.String(), rule.ID)
+		fmt.Fprintf(&b, "%s %s %s %s %s\n",
+			rule.Method, rule.pattern.String(), rule.ID, rule.Origin, rule.RedirectsTo)
 	}
 	digest := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(digest[:])
@@ -287,15 +316,43 @@ func gitLabRules() []Rule {
 		},
 	}
 
+	// Every GitLab rule is served by the primary endpoint and follows no
+	// redirect, so the table carries neither column.
+	gitLab := make([]ruleSpec, 0, len(specs))
+	for _, spec := range specs {
+		gitLab = append(gitLab, ruleSpec{
+			id: spec.id, purpose: spec.purpose, method: spec.method, pattern: spec.pattern,
+		})
+	}
+	return compile(gitLab)
+}
+
+// ruleSpec is the source form of a rule: origins default to primary and a rule
+// follows no redirect unless it says so.
+type ruleSpec struct {
+	id, purpose, method, pattern string
+	origin, redirectsTo          Origin
+}
+
+// compile turns rule specs into matchable rules. A pattern's first capture group
+// is the project identifier, so a rule with no group is project-independent.
+func compile(specs []ruleSpec) []Rule {
 	rules := make([]Rule, 0, len(specs))
 	for _, spec := range specs {
+		// MustCompile is safe: the patterns are compile-time constants covered by tests.
+		pattern := regexp.MustCompile(spec.pattern)
+		origin := spec.origin
+		if origin == "" {
+			origin = OriginPrimary
+		}
 		rules = append(rules, Rule{
-			ID:      spec.id,
-			Purpose: spec.purpose,
-			Method:  spec.method,
-			// MustCompile is safe: the patterns are compile-time constants covered by tests.
-			pattern:         regexp.MustCompile(spec.pattern),
-			capturesProject: strings.Contains(spec.pattern, project),
+			ID:              spec.id,
+			Purpose:         spec.purpose,
+			Method:          spec.method,
+			Origin:          origin,
+			RedirectsTo:     spec.redirectsTo,
+			pattern:         pattern,
+			capturesProject: pattern.NumSubexp() > 0,
 		})
 	}
 	return rules

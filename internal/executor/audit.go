@@ -35,6 +35,8 @@ type auditRecord struct {
 	Error string
 	// Cancelled is the reported CancelAck outcome when the request was cancelled.
 	Cancelled string
+	// RedirectOrigin names the pinned origin a redirect was followed to.
+	RedirectOrigin string
 	// Reason explains a denial or failure in words.
 	Reason        string
 	RequestBytes  int64
@@ -60,6 +62,7 @@ func (e *Executor) log(rec *auditRecord, elapsed time.Duration) {
 		{"query", rec.Query},
 		{"error", rec.Error},
 		{"cancelled", rec.Cancelled},
+		{"redirect_origin", rec.RedirectOrigin},
 		{"reason", rec.Reason},
 	} {
 		if opt.value != "" {
