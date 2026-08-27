@@ -340,13 +340,16 @@ func (e *Executor) buildRequest(
 	return req, nil
 }
 
-// authorize attaches the vendor's credential header.
+// authorize attaches the vendor's credential header. GitHub Enterprise and
+// Bitbucket Data Center both authenticate their tokens as bearer credentials;
+// GitLab uses its own header.
 func (e *Executor) authorize(req *http.Request, token string) {
-	if e.vendor == config.VendorGitHub {
+	switch e.vendor {
+	case config.VendorGitHub, config.VendorBitbucket:
 		req.Header.Set(gitHubAuthHeader, gitHubAuthScheme+token)
-		return
+	default:
+		req.Header.Set(gitLabTokenHeader, token)
 	}
-	req.Header.Set(gitLabTokenHeader, token)
 }
 
 // followPinnedRedirect resolves a redirect the matched rule allows. Only the path

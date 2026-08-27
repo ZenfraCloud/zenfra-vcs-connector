@@ -94,9 +94,11 @@ func NewEngine(cfg *config.Config) (*Engine, error) {
 		rules = gitLabRules()
 	case config.VendorGitHub:
 		rules = gitHubRules()
+	case config.VendorBitbucket:
+		rules = bitbucketRules()
 	default:
-		return nil, fmt.Errorf("policy: no allowlist for vendor %q, want %q or %q",
-			cfg.Vendor, config.VendorGitLab, config.VendorGitHub)
+		return nil, fmt.Errorf("policy: no allowlist for vendor %q, want %q, %q or %q",
+			cfg.Vendor, config.VendorGitLab, config.VendorGitHub, config.VendorBitbucket)
 	}
 	e := &Engine{
 		vendor:      cfg.Vendor,
@@ -182,7 +184,7 @@ func (e *Engine) match(method, path string) (rule *Rule, project string, matched
 			continue
 		}
 		if candidate.capturesProject && len(groups) > 1 {
-			project = decodeProject(groups[1])
+			project = decodeProject(groups[1:])
 		}
 		return candidate, project, true
 	}
@@ -199,15 +201,21 @@ func (e *Engine) projectAllowed(rule *Rule, project string) bool {
 	return ok
 }
 
-// decodeProject turns the captured path segment into the project identifier a
-// human configured: a numeric ID, or a namespace path with real slashes.
-func decodeProject(segment string) string {
-	decoded, err := url.PathUnescape(segment)
-	if err != nil {
-		// Unreachable: canonicalization already unescaped every segment.
-		return segment
+// decodeProject turns the captured path segments into the project identifier a
+// human configured: a numeric ID, a namespace path with real slashes, or — where
+// the vendor splits repository identity across the path, as Bitbucket does with
+// PROJECT/repos/slug — the segments joined back into one "PROJECT/repo" string.
+func decodeProject(segments []string) string {
+	parts := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		decoded, err := url.PathUnescape(segment)
+		if err != nil {
+			// Unreachable: canonicalization already unescaped every segment.
+			decoded = segment
+		}
+		parts = append(parts, decoded)
 	}
-	return decoded
+	return strings.Join(parts, "/")
 }
 
 // normalizeProject makes scope comparison case-insensitive; GitLab namespaces are
@@ -284,7 +292,7 @@ func gitLabRules() []Rule {
 		},
 		{
 			"gitlab.repository.archive", "Download Repository Archive", "GET",
-			`^/api/v4/projects/` + project + `/repository/archive(\.tar\.gz|\.tar\.bz2|\.tar|\.zip)?$`,
+			`^/api/v4/projects/` + project + `/repository/archive(?:\.tar\.gz|\.tar\.bz2|\.tar|\.zip)?$`,
 		},
 		{
 			"gitlab.merge_requests.list", "List Merge Requests", "GET",
@@ -334,8 +342,11 @@ type ruleSpec struct {
 	origin, redirectsTo          Origin
 }
 
-// compile turns rule specs into matchable rules. A pattern's first capture group
-// is the project identifier, so a rule with no group is project-independent.
+// compile turns rule specs into matchable rules. Every capture group in a pattern
+// is part of the project identifier — vendors that split repository identity
+// across the path capture more than one — so a rule with no group is
+// project-independent. Anything else a pattern needs to group must be
+// non-capturing.
 func compile(specs []ruleSpec) []Rule {
 	rules := make([]Rule, 0, len(specs))
 	for _, spec := range specs {

@@ -27,11 +27,11 @@ func engine(t *testing.T, projects ...string) *Engine {
 }
 
 func TestNewEngineRejectsUnsupportedVendor(t *testing.T) {
-	_, err := NewEngine(&config.Config{Vendor: "bitbucket", AllProjects: true})
+	_, err := NewEngine(&config.Config{Vendor: "perforce", AllProjects: true})
 	if err == nil {
 		t.Fatal("NewEngine() error = nil, want an unsupported-vendor error")
 	}
-	if !strings.Contains(err.Error(), "bitbucket") {
+	if !strings.Contains(err.Error(), "perforce") {
 		t.Errorf("NewEngine() error = %q, want it to name the vendor", err)
 	}
 }

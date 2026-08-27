@@ -22,10 +22,14 @@ const (
 	// VendorGitHub is a self-managed GitHub Enterprise Server instance. GitHub.com
 	// needs no connector, so the REST surface here is the /api/v3 one.
 	VendorGitHub Vendor = "github"
+	// VendorBitbucket is a Bitbucket Data Center / Server instance. Bitbucket
+	// Cloud is a different API and needs no connector, so the REST surface here
+	// is the /rest/api/1.0 one.
+	VendorBitbucket Vendor = "bitbucket"
 )
 
 // supportedVendors is the set --vendor accepts, in the order the error lists them.
-var supportedVendors = []Vendor{VendorGitLab, VendorGitHub}
+var supportedVendors = []Vendor{VendorGitLab, VendorGitHub, VendorBitbucket}
 
 // supported reports whether v has a compiled allowlist.
 func (v Vendor) supported() bool {

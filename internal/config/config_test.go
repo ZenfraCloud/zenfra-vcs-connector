@@ -211,11 +211,14 @@ func TestLoadMisconfigIsFatalWithClearMessage(t *testing.T) {
 				"--gateway-url", "https://api.zenfra.cloud",
 				"--bootstrap-token", "vcsc_abc.def",
 				"--endpoint", "https://gitlab.internal",
-				"--vendor", "bitbucket",
+				"--vendor", "perforce",
 				"--secret-file", "/etc/zenfra/gitlab-token",
 				"--all-projects",
 			},
-			want: []string{"--vendor", "bitbucket", string(VendorGitLab), string(VendorGitHub)},
+			want: []string{
+				"--vendor", "perforce",
+				string(VendorGitLab), string(VendorGitHub), string(VendorBitbucket),
+			},
 		},
 		{
 			name: "missing secret file",
