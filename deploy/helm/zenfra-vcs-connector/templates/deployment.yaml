@@ -71,6 +71,12 @@ spec:
               value: {{ .Values.connector.credentialMode | quote }}
             - name: ZENFRA_VCS_CONNECTOR_POLICY_MODE
               value: {{ .Values.connector.policyMode | quote }}
+            {{- with .Values.connector.enrollmentKeyDir }}
+            # Written by the connector itself on first registration; never
+            # templated, never in the Secret, never shared between pods.
+            - name: ZENFRA_VCS_CONNECTOR_ENROLLMENT_KEY_FILE
+              value: {{ include "zenfra-vcs-connector.enrollmentKeyPath" $ | quote }}
+            {{- end }}
             {{- if .Values.connector.allProjects }}
             - name: ZENFRA_VCS_CONNECTOR_ALL_PROJECTS
               value: "true"
@@ -129,6 +135,11 @@ spec:
               mountPath: {{ .Values.secret.mountPath | quote }}
               readOnly: true
             {{- end }}
+            {{- with .Values.connector.enrollmentKeyDir }}
+            # The only writable path in an otherwise read-only root filesystem.
+            - name: enrollment-state
+              mountPath: {{ . | quote }}
+            {{- end }}
             {{- if .Values.caBundle.configMapName }}
             - name: ca-bundle
               mountPath: {{ .Values.caBundle.mountPath | quote }}
@@ -137,6 +148,10 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
+        {{- with .Values.connector.enrollmentKeyDir }}
+        - name: enrollment-state
+          emptyDir: {}
+        {{- end }}
         {{- if not (eq .Values.connector.credentialMode "control_plane") }}
         - name: connector-secret
           secret:

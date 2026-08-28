@@ -77,6 +77,11 @@ const (
 // bulk stream is always opened alongside them.
 const DefaultInteractiveConnections = 3
 
+// maxInteractiveConnections bounds --interactive-connections. The gateway caps
+// the live streams one connector may hold, so a larger fleet needs more
+// instances, not more lanes per instance.
+const maxInteractiveConnections = 16
+
 // Environment variables, each mirroring the flag of the same name.
 const (
 	EnvGatewayURL             = "ZENFRA_VCS_CONNECTOR_GATEWAY_URL"
@@ -297,6 +302,10 @@ func (c *Config) checkRequired() error {
 	// Once this instance has enrolled it presents its own persisted key, so the
 	// fleet-wide bootstrap token can be unmounted — which is the whole point of
 	// per-instance enrollment. Demand it only when there is no key to fall back on.
+	// Trimmed in place, not just for the emptiness test: a trailing newline from
+	// a ConfigMap would otherwise make every open of the key file fail and
+	// silently fall back to the fleet-wide bootstrap token.
+	c.EnrollmentKeyFile = strings.TrimSpace(c.EnrollmentKeyFile)
 	if strings.TrimSpace(c.BootstrapToken) == "" && !c.hasEnrollmentKey() {
 		return fmt.Errorf("%w: --bootstrap-token is required (or set %s) "+
 			"until this instance has enrolled and persisted an enrollment key",
@@ -307,7 +316,7 @@ func (c *Config) checkRequired() error {
 
 // hasEnrollmentKey reports whether a non-empty enrollment key is already on disk.
 func (c *Config) hasEnrollmentKey() bool {
-	if strings.TrimSpace(c.EnrollmentKeyFile) == "" {
+	if c.EnrollmentKeyFile == "" {
 		return false
 	}
 	info, err := os.Stat(c.EnrollmentKeyFile)
@@ -423,9 +432,12 @@ func (c *Config) normalizeScope() error {
 			ErrInvalidConfig)
 	}
 
-	if c.InteractiveConnections < 1 {
-		return fmt.Errorf("%w: --interactive-connections must be at least 1, got %d",
-			ErrInvalidConfig, c.InteractiveConnections)
+	// Bounded at both ends: the gateway caps what one connector may hold, so an
+	// unbounded count here would just hammer the control plane with upgrades that
+	// are refused on arrival.
+	if c.InteractiveConnections < 1 || c.InteractiveConnections > maxInteractiveConnections {
+		return fmt.Errorf("%w: --interactive-connections must be between 1 and %d, got %d",
+			ErrInvalidConfig, maxInteractiveConnections, c.InteractiveConnections)
 	}
 
 	if c.InstanceKey == "" {

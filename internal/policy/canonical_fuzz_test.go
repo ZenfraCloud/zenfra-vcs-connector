@@ -26,6 +26,9 @@ var canonicalPathSeeds = []string{
 	"/api/v4/%2E%2E/admin/users",
 	"/api/v4/projects/eng%2F..%2Fother",
 	"/api/v4/%252e%252e/admin/users",
+	"/api/v4/..%3B/admin/users",
+	"/api/v4/%2E%2E%3B/admin/users",
+	"/api/v4/..%20/admin/users",
 	"/api/v4\\admin\\users",
 	"/api/v4/%5cadmin",
 	"/api/v4//user",
@@ -101,18 +104,19 @@ func assertSegmentsDecodeSafely(t *testing.T, raw, got string) {
 		if err != nil {
 			t.Fatalf("CanonicalizePath(%q) = %q, accepted segment %q does not decode: %v", raw, got, segment, err)
 		}
-		// The raw form is checked for ?#@ elsewhere; the decoded form must be too,
-		// or %3F/%23/%40 would smuggle one past the allowlist into the upstream URL.
-		if i := strings.IndexAny(decoded, "?#@"); i >= 0 {
+		// The raw form is checked for ?#@; elsewhere; the decoded form must be too,
+		// or %3F/%23/%40/%3B would smuggle one past the allowlist into the upstream URL.
+		if i := strings.IndexAny(decoded, "?#@;"); i >= 0 {
 			t.Fatalf("CanonicalizePath(%q) = %q, segment %q decodes to %q containing %q",
 				raw, got, segment, decoded, decoded[i])
 		}
 		for _, part := range strings.Split(decoded, "/") {
-			switch part {
-			case "":
-				t.Fatalf("CanonicalizePath(%q) = %q, segment %q decodes to an empty part", raw, got, segment)
-			case ".", "..":
-				t.Fatalf("CanonicalizePath(%q) = %q, segment %q decodes to a dot segment", raw, got, segment)
+			// Trimming rather than comparing: trailing dots and spaces are stripped
+			// by the upstream, so ".. " and "..." reach it as the dot segment an
+			// exact comparison misses.
+			if strings.TrimRight(part, ". ") == "" {
+				t.Fatalf("CanonicalizePath(%q) = %q, segment %q decodes to an empty or dot part %q",
+					raw, got, segment, part)
 			}
 		}
 	}

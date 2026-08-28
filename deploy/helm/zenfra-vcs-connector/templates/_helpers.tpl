@@ -41,3 +41,8 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "zenfra-vcs-connector.secretFilePath" -}}
 {{- printf "%s/%s" (trimSuffix "/" .Values.secret.mountPath) .Values.secret.credentialKey -}}
 {{- end -}}
+
+{{/* Absolute path of the per-instance enrollment key file. */}}
+{{- define "zenfra-vcs-connector.enrollmentKeyPath" -}}
+{{- printf "%s/enrollment.key" (trimSuffix "/" .Values.connector.enrollmentKeyDir) -}}
+{{- end -}}

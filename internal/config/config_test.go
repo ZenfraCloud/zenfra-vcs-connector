@@ -306,6 +306,13 @@ func TestLoadMisconfigIsFatalWithClearMessage(t *testing.T) {
 			want: []string{"--interactive-connections"},
 		},
 		{
+			// The gateway caps live streams per connector, so an unbounded count
+			// here only produces upgrades that are refused on arrival.
+			name: "interactive connections above the ceiling",
+			args: append(validArgs(), "--interactive-connections", "100000"),
+			want: []string{"--interactive-connections", "between 1 and"},
+		},
+		{
 			name: "unknown flag",
 			args: append(validArgs(), "--nope"),
 			want: []string{"nope"},

@@ -22,8 +22,16 @@ const (
 	DefaultBackoffBase = time.Second
 	// DefaultBackoffCap bounds the reconnect delay.
 	DefaultBackoffCap = 30 * time.Second
+	// minUptimeForBackoffReset is how long a connection must last to count as
+	// real work. Dial returning nil only means the 101 completed: an intermediary
+	// that upgrades and immediately resets would otherwise hold the ladder at its
+	// first rung forever, reconnecting sub-second without ever escalating.
+	minUptimeForBackoffReset = 30 * time.Second
 	// DefaultRefreshSkew exceeds the gateway's connection lifetime cap (45m) so a
 	// token can never expire mid-connection and strand the stream.
+	// service.VCSConnectorTokenTTL is sized so TTL-skew also exceeds that cap:
+	// refreshing revokes the jti every stream shares, so a skew that fires on
+	// every reconnect would turn one lane dropping into a fleet-wide restart.
 	DefaultRefreshSkew = 50 * time.Minute
 )
 
@@ -166,6 +174,7 @@ func (m *Manager) supervise(ctx context.Context, lane Lane, index int) error {
 		if ctx.Err() != nil {
 			return nil
 		}
+		start := time.Now()
 		established, err := m.connectOnce(ctx, lane)
 		if ctx.Err() != nil {
 			return nil
@@ -174,8 +183,9 @@ func (m *Manager) supervise(ctx context.Context, lane Lane, index int) error {
 			logger.Error("tunnel stream stopped permanently", "error", err)
 			return err
 		}
-		if established {
-			// The stream did real work before dropping; start the ladder over.
+		if established && time.Since(start) >= minUptimeForBackoffReset {
+			// The stream stayed up long enough to have done real work; start the
+			// ladder over. An accept-then-drop loop keeps escalating instead.
 			attempt = 0
 		}
 		delay := Backoff(attempt, m.BackoffBase, m.BackoffCap)

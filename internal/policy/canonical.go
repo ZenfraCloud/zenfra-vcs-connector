@@ -84,14 +84,21 @@ func validateSegment(segment string) error {
 	if err := rejectUnsafeRunes(decoded, "decoded path"); err != nil {
 		return err
 	}
-	if strings.ContainsAny(decoded, "?#@") {
-		return fmt.Errorf("path must not encode a query, fragment or @ (segment %q)", segment)
+	// ; is rejected in the decoded form too, not just the raw one: %3B survives
+	// the raw check byte-for-byte, and any hop that decodes it before the
+	// upstream's path-parameter parser turns "..%3B" back into the "..;" the raw
+	// check exists to stop.
+	if strings.ContainsAny(decoded, "?#@;") {
+		return fmt.Errorf("path must not encode a query, fragment, @ or ; (segment %q)", segment)
 	}
 	for _, part := range strings.Split(decoded, "/") {
-		switch part {
-		case "":
+		if part == "" {
 			return fmt.Errorf("path must not contain an empty segment (segment %q)", segment)
-		case ".", "..":
+		}
+		// Trimming rather than comparing: trailing dots and spaces are stripped by
+		// Windows and by some servlet containers, so "..%20" and "..%2E" reach the
+		// upstream as the parent-directory segment an exact ".." test misses.
+		if strings.TrimRight(part, ". ") == "" {
 			return fmt.Errorf("path must not contain a dot segment (segment %q)", segment)
 		}
 	}

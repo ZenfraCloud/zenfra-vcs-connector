@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -139,6 +140,44 @@ func TestCancelOutcome(t *testing.T) {
 		if got := cancelOutcome(phase); got != want {
 			t.Errorf("cancelOutcome(%d) = %v, want %v", phase, got, want)
 		}
+	}
+}
+
+// A reset that lands after the head is still an upstream transport failure, and
+// its raw error names this pod's IP and the private VCS's. Neither belongs in a
+// message that crosses the tunnel into the control plane's logs.
+func TestHandle_MidBodyUpstreamResetIsClassifiedNotEchoed(t *testing.T) {
+	stub := newStub(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "64")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":`))
+		w.(http.Flusher).Flush()
+		// Drop the TCP connection without finishing the declared body.
+		conn, _, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
+	})
+	exec, _ := newExecutor(t, stub.srv.URL, newSecretFile(t, testSecret))
+
+	w := newFakeResponder()
+	exec.Handle(context.Background(), req(http.MethodGet, "/api/v4/projects/1/repository/tree", ""), w)
+
+	got := w.snapshot()
+	if got.failure == nil {
+		t.Fatal("a truncated body must fail the exchange")
+	}
+	if code := got.failure.GetCode(); code != tunnel.ErrCodeUpstreamConn {
+		t.Errorf("code = %q, want %q", code, tunnel.ErrCodeUpstreamConn)
+	}
+	if msg := got.failure.GetMessage(); msg != "upstream connection failed" {
+		t.Errorf("message = %q, want the classified string with no transport detail", msg)
+	}
+	if host, _, _ := net.SplitHostPort(stub.srv.Listener.Addr().String()); host != "" &&
+		strings.Contains(got.failure.GetMessage(), host) {
+		t.Errorf("message %q leaks the upstream address", got.failure.GetMessage())
 	}
 }
 

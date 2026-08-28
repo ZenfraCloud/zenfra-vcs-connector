@@ -294,7 +294,7 @@ func (e *Executor) Handle(ctx context.Context, req *connect.Request, w Responder
 		resp = next
 	}
 
-	e.stream(ctx, &dec, head, resp, w, rec, phase)
+	e.stream(ctx, callCtx, &dec, head, resp, w, rec, phase)
 }
 
 // readRequestBody buffers the request body under the cap. Bodies here are MR
@@ -493,9 +493,10 @@ func isRedirect(status int) bool {
 	}
 }
 
-// stream forwards the response head and body back through the tunnel.
+// stream forwards the response head and body back through the tunnel. ctx is the
+// exchange's (cancellation), callCtx the upstream call's (its deadline class).
 func (e *Executor) stream(
-	ctx context.Context,
+	ctx, callCtx context.Context,
 	dec *policy.Decision,
 	head *tunnel.HTTPRequest,
 	resp *http.Response,
@@ -539,8 +540,13 @@ func (e *Executor) stream(
 			e.ack(w, rec, cancelOutcome(phase))
 			return
 		}
-		rec.Reason = "streaming response body: " + err.Error()
-		e.fail(w, rec, tunnel.ErrCodeUpstreamConn, rec.Reason, false, tunnel.ErrorOrigin_ERROR_ORIGIN_UPSTREAM)
+		// Classified, not echoed: a mid-body net.OpError carries this pod's IP and
+		// the upstream's, which have no business crossing the tunnel. callCtx is
+		// what carries the deadline class, so a bulk-lane timeout is reported as a
+		// timeout rather than as a non-retryable connection failure.
+		code, message := classifyUpstreamError(err, callCtx)
+		rec.Reason = message
+		e.fail(w, rec, code, message, code != tunnel.ErrCodeUpstreamTLS, tunnel.ErrorOrigin_ERROR_ORIGIN_UPSTREAM)
 		return
 	}
 	if err := w.Close(); err != nil {

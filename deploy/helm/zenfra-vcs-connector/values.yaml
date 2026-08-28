@@ -35,6 +35,14 @@ connector:
   credentialMode: agent_local
   # allowlist (default) | blocklist. Blocklist requires allProjects.
   policyMode: allowlist
+  # Directory for the per-instance enrollment key. On its first registration the
+  # instance is issued its own key and persists it here; from then on that key —
+  # not the fleet-wide bootstrap token — is what it re-registers with, so
+  # revoking this instance ends its access for good. Backed by a per-pod
+  # emptyDir: it survives container restarts, and a rescheduled pod gets a new
+  # name and therefore a new instance record anyway. Set to "" to disable and
+  # bootstrap on every restart.
+  enrollmentKeyDir: /var/lib/zenfra-vcs-connector
 
 # Bootstrap token and the upstream VCS credential come from a Secret you create
 # yourself — the chart never templates secret material, so the credential is not

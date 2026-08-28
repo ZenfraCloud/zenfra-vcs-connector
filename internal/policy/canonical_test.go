@@ -66,6 +66,12 @@ func TestCanonicalizePathRejects(t *testing.T) {
 		// "..;" would match a rule verbatim and traverse upstream.
 		{"path parameter traversal", "/rest/api/1.0/projects/P/repos/r/browse/..;/..;/admin", "path parameter"},
 		{"encoded path parameter traversal", "/rest/api/1.0/projects/P/repos/r/browse/%2E%2E;/admin", "path parameter"},
+		// %3B survives the raw ; check byte-for-byte; any hop that decodes it before
+		// the upstream's path-parameter parser gets the "..;" back.
+		{"percent-encoded path parameter", "/rest/api/1.0/projects/P/repos/r/browse/..%3B/admin", "or ;"},
+		{"fully encoded path parameter", "/rest/api/1.0/projects/P/repos/r/browse/%2E%2E%3B/admin", "or ;"},
+		{"trailing space traversal", "/api/v4/..%20/admin/users", "dot segment"},
+		{"trailing dot traversal", "/api/v4/...%2E/admin/users", "dot segment"},
 		{"double encoding", "/api/v4/%252e%252e/admin/users", "double-encoded"},
 		{"double encoded slash", "/api/v4/projects/eng%252Fplatform", "double-encoded"},
 		{"backslash", "/api/v4\\admin\\users", "backslash"},
