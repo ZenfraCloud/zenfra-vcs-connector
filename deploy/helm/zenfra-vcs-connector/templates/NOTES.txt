@@ -8,4 +8,4 @@ Check registration:
   kubectl logs -l app.kubernetes.io/instance={{ .Release.Name }} -f
 
 Then confirm the connector reports healthy in Zenfra:
-  GET {{ .Values.connector.gatewayUrl }}/api/v1/vcs-connectors
+  GET {{ .Values.connector.gatewayUrl }}/api/v1/vcs/connectors

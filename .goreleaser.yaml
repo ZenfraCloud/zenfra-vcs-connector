@@ -37,6 +37,13 @@ archives:
     # LICENSE joins this list when the module moves to its public repo.
     files:
       - README.md
+  # The raw binary too, so its digest lands in SHA256SUMS: that is the digest
+  # verify-reproducible-build.sh --expect compares against, and the security
+  # docs tell customers to read it from the published checksums.
+  - id: connector-binary
+    ids: [connector]
+    formats: [binary]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
   name_template: SHA256SUMS

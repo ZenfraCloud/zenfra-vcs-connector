@@ -137,6 +137,45 @@ func TestClientErrorClassification(t *testing.T) {
 	}
 }
 
+// IsRetryable decides whether the connector lives or dies: a "false" here ends
+// the process for good, so every arm is pinned.
+func TestIsRetryableClassification(t *testing.T) {
+	slow := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+	}))
+	defer slow.Close()
+	// An http.Client timeout satisfies errors.Is(err, context.DeadlineExceeded),
+	// so treating that sentinel as terminal would kill the connector whenever the
+	// control plane is merely slow.
+	_, clientTimeout := (&http.Client{Timeout: 10 * time.Millisecond}).Get(slow.URL)
+	if clientTimeout == nil {
+		t.Fatal("expected the client to time out")
+	}
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"cancelled context", context.Canceled, false},
+		{"client timeout", clientTimeout, true},
+		{"deadline exceeded", context.DeadlineExceeded, true},
+		{"rejected credential", &APIError{Status: http.StatusUnauthorized}, false},
+		{"forbidden", &APIError{Status: http.StatusForbidden}, false},
+		{"rate limited", &APIError{Status: http.StatusTooManyRequests}, true},
+		{"control plane down", &APIError{Status: http.StatusServiceUnavailable}, true},
+		{"transport failure", errors.New("dial tcp: connection refused"), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsRetryable(tt.err); got != tt.want {
+				t.Errorf("IsRetryable(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestClientNetworkFailureIsRetryable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	srv.Close() // nothing is listening now

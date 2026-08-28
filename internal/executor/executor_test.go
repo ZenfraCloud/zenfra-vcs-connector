@@ -274,11 +274,26 @@ func TestHandle_DeniedRequestNeverReadsSecretOrReachesUpstream(t *testing.T) {
 	}
 }
 
+// Driven off rejectedRequestHeaders itself: a header removed from the table
+// would otherwise be silently stripped instead of refused, which is exactly the
+// laundering the table exists to prevent.
 func TestHandle_RejectsInboundCredentialHeaders(t *testing.T) {
+	// Deleting a name from the table must fail here too: an entry that is in
+	// neither table is silently stripped, which looks like it worked.
 	for _, name := range []string{
-		"Authorization", "authorization", "Cookie", "PRIVATE-TOKEN",
-		"Proxy-Authorization", "X-Api-Key",
+		"Authorization", "Proxy-Authorization", "Cookie", "Private-Token",
+		"Job-Token", "Deploy-Token", "X-Api-Key", "X-Access-Token", "X-Csrf-Token",
 	} {
+		if !rejectedRequestHeaders[name] {
+			t.Errorf("%s is no longer refused; a credential header must never be stripped instead", name)
+		}
+	}
+
+	names := []string{"authorization", "PRIVATE-TOKEN"} // casing is not significant
+	for name := range rejectedRequestHeaders {
+		names = append(names, name)
+	}
+	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
 			stub := newStub(t, func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusOK)
@@ -633,9 +648,11 @@ func TestHandle_UpstreamTimeout(t *testing.T) {
 	}
 }
 
+// connect.Responder wraps an unexported *Conn, so the closure cannot be driven
+// from here; the return type is the compile-time proof and this guards a nil one.
+// Handler's body is exercised end-to-end by the connect package's own tests.
 func TestHandler_MatchesConnectSignature(t *testing.T) {
 	exec, _ := newExecutor(t, "https://gitlab.internal", newSecretFile(t, testSecret))
-	// The return type is the compile-time proof; this guards against a nil one.
 	handler := exec.Handler()
 	if handler == nil {
 		t.Fatal("Handler() returned nil")

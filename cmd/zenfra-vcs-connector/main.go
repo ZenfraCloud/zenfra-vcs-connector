@@ -92,7 +92,10 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 		return fmt.Errorf("building tunnel dialer: %w", err)
 	}
 
-	manager := connect.NewManager(cfg, connect.NewClient(cfg.GatewayURL, nil), dialer, version, logger)
+	// The dialer already resolved --ca-bundle; the register and refresh legs
+	// reuse it so both halves of the gateway conversation trust the same roots.
+	client := connect.NewClient(cfg.GatewayURL, connect.NewRegistrationClient(dialer.TLSConfig))
+	manager := connect.NewManager(cfg, client, dialer, version, logger)
 	manager.Metrics = collector
 
 	stopWebhooks, err := serveWebhooks(cfg, manager, logger)

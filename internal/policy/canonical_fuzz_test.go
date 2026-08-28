@@ -101,6 +101,12 @@ func assertSegmentsDecodeSafely(t *testing.T, raw, got string) {
 		if err != nil {
 			t.Fatalf("CanonicalizePath(%q) = %q, accepted segment %q does not decode: %v", raw, got, segment, err)
 		}
+		// The raw form is checked for ?#@ elsewhere; the decoded form must be too,
+		// or %3F/%23/%40 would smuggle one past the allowlist into the upstream URL.
+		if i := strings.IndexAny(decoded, "?#@"); i >= 0 {
+			t.Fatalf("CanonicalizePath(%q) = %q, segment %q decodes to %q containing %q",
+				raw, got, segment, decoded, decoded[i])
+		}
 		for _, part := range strings.Split(decoded, "/") {
 			switch part {
 			case "":

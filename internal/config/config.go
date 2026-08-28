@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 )
 
@@ -515,8 +516,10 @@ func splitList(raw string) []string {
 }
 
 func intFromEnv(raw string, fallback int) int {
-	var parsed int
-	if _, err := fmt.Sscanf(raw, "%d", &parsed); err != nil {
+	// Atoi, not Sscanf: Sscanf stops at the first non-digit, so "3junk" would
+	// silently mean 3 instead of falling back.
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
 		return fallback
 	}
 	return parsed

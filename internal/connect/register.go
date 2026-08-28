@@ -5,6 +5,7 @@ package connect
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,7 +62,10 @@ func IsRetryable(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	// DeadlineExceeded is deliberately absent: an http.Client timeout reports
+	// itself that way, and a slow control plane must not be terminal. A genuinely
+	// cancelled parent context is caught by the caller's own ctx.Err() check.
+	if errors.Is(err, context.Canceled) {
 		return false
 	}
 	var classified interface{ Retryable() bool }
@@ -84,6 +88,23 @@ func NewClient(baseURL string, httpClient *http.Client) *Client {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
 	return &Client{baseURL: baseURL, http: httpClient}
+}
+
+// NewRegistrationClient builds the HTTP client for the register and refresh
+// legs. It carries the same trust roots as the tunnel dial, so --ca-bundle
+// covers both: without it a gateway behind an internal CA can be dialled but
+// never registered against.
+func NewRegistrationClient(tlsCfg *tls.Config) *http.Client {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return &http.Client{Timeout: 30 * time.Second}
+	}
+	transport := base.Clone()
+	transport.Proxy = http.ProxyFromEnvironment
+	if tlsCfg != nil {
+		transport.TLSClientConfig = tlsCfg
+	}
+	return &http.Client{Timeout: 30 * time.Second, Transport: transport}
 }
 
 // Register exchanges a registration credential — the connector's bootstrap token

@@ -359,9 +359,12 @@ func (c *Conn) startExchange(ctx context.Context, env *tunnel.Envelope) error {
 
 	c.mu.Lock()
 	if c.current != nil {
+		// Read the in-flight ID before unlocking: the handler goroutine nils
+		// c.current the moment it settles, so touching it after would race.
+		inFlight := c.current.requestID
 		c.mu.Unlock()
 		return fmt.Errorf("%w: second request %q while %q is in flight",
-			ErrProtocol, requestID, c.current.requestID)
+			ErrProtocol, requestID, inFlight)
 	}
 	if requestID == c.lastID {
 		c.mu.Unlock()
@@ -486,6 +489,15 @@ func (c *Conn) enqueue(env *tunnel.Envelope) error {
 	if err != nil {
 		return fmt.Errorf("encoding tunnel envelope: %w", err)
 	}
+	// Checked first and on its own: c.out keeps buffer capacity after Close, so a
+	// combined select would pick it at random and report a frame as sent that no
+	// write pump will ever drain.
+	select {
+	case <-c.closed:
+		return errors.New("connect: connection closed")
+	default:
+	}
+
 	timer := time.NewTimer(c.cfg.WriteWait)
 	defer timer.Stop()
 

@@ -26,8 +26,10 @@ type stubPlane struct {
 	registerStatus []int
 	// tunnelStatus rejects upgrades with the given statuses, one per call.
 	tunnelStatus []int
-	registers    int
-	refreshes    int
+	// refreshStatus is consumed one entry per call; 0 or exhausted means 200.
+	refreshStatus []int
+	registers     int
+	refreshes     int
 	// tokenTTL is how long minted tokens stay valid.
 	tokenTTL time.Duration
 	minted   int
@@ -61,7 +63,16 @@ func newStubPlane(t *testing.T) *stubPlane {
 	mux.HandleFunc(refreshPath, func(w http.ResponseWriter, _ *http.Request) {
 		p.mu.Lock()
 		p.refreshes++
+		status := http.StatusOK
+		if len(p.refreshStatus) > 0 {
+			status, p.refreshStatus = p.refreshStatus[0], p.refreshStatus[1:]
+		}
 		p.mu.Unlock()
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "denied", "message": "no"})
+			return
+		}
 		p.writeToken(w, http.StatusOK)
 	})
 	mux.HandleFunc(tunnelPath, func(w http.ResponseWriter, r *http.Request) {
@@ -141,6 +152,12 @@ func (p *stubPlane) setTokenTTL(ttl time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.tokenTTL = ttl
+}
+
+func (p *stubPlane) setRefreshStatus(statuses ...int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.refreshStatus = statuses
 }
 
 func (p *stubPlane) counts() (registers, refreshes int) {
@@ -343,6 +360,35 @@ func TestManagerRefreshesATokenThatWouldExpireMidConnection(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Error("the manager reused a nearly expired token instead of refreshing it")
+}
+
+// A refused refresh must not be terminal: the JWT outlives any outage shorter
+// than its TTL, so a longer one would otherwise leave the connector holding an
+// expired token it can never replace, and the process would exit for good.
+func TestManagerReRegistersAfterARefusedRefresh(t *testing.T) {
+	p := newStubPlane(t)
+	p.setTokenTTL(time.Second)
+	p.setRefreshStatus(http.StatusUnauthorized)
+	m := newTestManager(t, p, 1)
+	run(t, m)
+
+	p.waitAccepted(t, 2)
+	p.mu.Lock()
+	first := p.conns[0]
+	p.mu.Unlock()
+	_ = first.Close()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		registers, refreshes := p.counts()
+		if refreshes > 0 && registers >= 2 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	registers, refreshes := p.counts()
+	t.Errorf("registers=%d refreshes=%d, want a re-registration after the refused refresh",
+		registers, refreshes)
 }
 
 func TestManagerReturnsCleanlyOnCancellation(t *testing.T) {

@@ -43,6 +43,30 @@ const (
 	ErrCodeCancelled                = "cancelled"
 )
 
+// knownErrorCodes is the closed set above. The codes become Prometheus label
+// values on the gateway, so a code arriving off the wire is checked against this
+// set before it is used — a customer-run connector must not be able to invent
+// label values in the shared control plane.
+var knownErrorCodes = map[string]bool{
+	ErrCodeAuth:                     true,
+	ErrCodePolicyDenied:             true,
+	ErrCodeConnectorOffline:         true,
+	ErrCodeConnectorBusy:            true,
+	ErrCodeStreamLostBeforeDispatch: true,
+	ErrCodeOutcomeUnknown:           true,
+	ErrCodeUpstreamDNS:              true,
+	ErrCodeUpstreamTLS:              true,
+	ErrCodeUpstreamConn:             true,
+	ErrCodeUpstreamTimeout:          true,
+	ErrCodeUpstreamHTTP:             true,
+	ErrCodeTooLarge:                 true,
+	ErrCodeProtocol:                 true,
+	ErrCodeCancelled:                true,
+}
+
+// IsKnownErrorCode reports whether code is one of the stable wire error codes.
+func IsKnownErrorCode(code string) bool { return knownErrorCodes[code] }
+
 var (
 	ErrEmptyRequestID     = errors.New("tunnel: empty request id")
 	ErrNoMessage          = errors.New("tunnel: envelope has no message")

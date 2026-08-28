@@ -219,6 +219,43 @@ func TestHandle_RedirectOutsideProjectScopeIsDenied(t *testing.T) {
 	}
 }
 
+// The redirect must land on the origin the matched rule pinned. A Location that
+// is allowlisted but belongs to the primary origin steers the follow-up back at
+// the API host — where buildRequest would inject the credential — so the origin
+// check, not just the allowlist, is what refuses it.
+func TestHandle_RedirectOntoTheWrongOriginIsDenied(t *testing.T) {
+	codeload := newStub(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("should never be reached"))
+	})
+	api := newStub(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v3/user" {
+			_, _ = w.Write([]byte(`{"login":"should never be reached"}`))
+			return
+		}
+		// Allowlisted — but by a primary-origin rule, not a codeload one.
+		w.Header().Set("Location", "/api/v3/user")
+		w.WriteHeader(http.StatusFound)
+	})
+	exec, _ := newGitHubExecutor(t, api.srv.URL, codeload.srv.URL, newSecretFile(t, gheSecret))
+
+	w := newFakeResponder()
+	exec.Handle(context.Background(), req(http.MethodGet, "/api/v3/repos/eng/platform/tarball/abc123", ""), w)
+
+	got := w.snapshot()
+	if got.failure == nil {
+		t.Fatal("Fail() was never called, want policy_denied")
+	}
+	if code := got.failure.GetCode(); code != tunnel.ErrCodePolicyDenied {
+		t.Errorf("code = %q, want %q", code, tunnel.ErrCodePolicyDenied)
+	}
+	if api.count() != 1 {
+		t.Errorf("API origin received %d requests, want 1 (the redirect was not followed)", api.count())
+	}
+	if codeload.count() != 0 {
+		t.Errorf("codeload origin received %d requests, want 0", codeload.count())
+	}
+}
+
 // Only rules that declare a redirect target follow one. Everything else reports
 // the redirect as the upstream's own answer.
 func TestHandle_RedirectOnANonArchiveRuleIsNotFollowed(t *testing.T) {

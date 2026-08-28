@@ -32,14 +32,14 @@ const relayTimeout = 10 * time.Second
 // GitHub Enterprise and Bitbucket Data Center sign the body with HMAC-SHA256 (on
 // different headers), and Azure DevOps uses HTTP Basic.
 const (
-	headerGitLabToken    = "X-Gitlab-Token" //nolint:gosec // header name, not a credential
-	headerGitLabEvent    = "X-Gitlab-Event"
-	headerGitLabDelivery = "X-Gitlab-Event-UUID"
+	headerGitLabToken     = "X-Gitlab-Token" //nolint:gosec // header name, not a credential
+	headerGitLabEvent     = "X-Gitlab-Event"
+	headerGitLabDelivery  = "X-Gitlab-Event-UUID"
 	headerHubSignature256 = "X-Hub-Signature-256"
 	// headerHubSignature is Bitbucket Data Center's signature header. It carries
 	// the same "sha256=<hex>" body HMAC as GitHub's -256 variant.
-	headerHubSignature = "X-Hub-Signature"
-	headerGitHubEvent  = "X-GitHub-Event"
+	headerHubSignature   = "X-Hub-Signature"
+	headerGitHubEvent    = "X-GitHub-Event"
 	headerGitHubDelivery = "X-GitHub-Delivery"
 	headerBitbucketEvent = "X-Event-Key"
 	// headerRequestID is the delivery identity for the two vendors that ship no
@@ -103,6 +103,10 @@ func (l *Listener) Handler() http.Handler {
 func (l *Listener) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, tunnel.MaxEventBytes))
 	if err != nil {
+		// Logged, unlike the other refusals: no vendor retries a 413, so without
+		// a record the delivery simply vanishes with nothing to point at.
+		l.logger.Warn("refused an oversized webhook delivery",
+			"limit_bytes", tunnel.MaxEventBytes, "error", err)
 		http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
 		return
 	}

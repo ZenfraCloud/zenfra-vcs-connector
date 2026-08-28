@@ -272,7 +272,12 @@ func (t *tokenSource) get(ctx context.Context) (string, error) {
 	// would need one jti per stream; add that if the reconnect storm ever matters.
 	inst, err := t.client.Refresh(ctx, t.cur.Token)
 	if err != nil {
-		return "", err
+		// Drop the token and keep the lane retryable: the next attempt
+		// re-registers with the enrollment key instead of replaying a token the
+		// control plane just refused, which would otherwise end the process for
+		// good once the JWT outlived any outage longer than the skew window.
+		t.cur = nil
+		return "", &retryableError{err}
 	}
 	t.cur = inst
 	return inst.Token, nil
