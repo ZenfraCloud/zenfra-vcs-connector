@@ -306,7 +306,11 @@ func (c *Config) checkRequired() error {
 	// a ConfigMap would otherwise make every open of the key file fail and
 	// silently fall back to the fleet-wide bootstrap token.
 	c.EnrollmentKeyFile = strings.TrimSpace(c.EnrollmentKeyFile)
-	if strings.TrimSpace(c.BootstrapToken) == "" && !c.hasEnrollmentKey() {
+	// Trimmed in place for the same reason: an untrimmed token becomes an invalid
+	// Authorization header value, which net/http rejects as a transport error the
+	// registration client then retries forever instead of exiting 2.
+	c.BootstrapToken = strings.TrimSpace(c.BootstrapToken)
+	if c.BootstrapToken == "" && !c.hasEnrollmentKey() {
 		return fmt.Errorf("%w: --bootstrap-token is required (or set %s) "+
 			"until this instance has enrolled and persisted an enrollment key",
 			ErrInvalidConfig, EnvBootstrapToken)
@@ -320,7 +324,14 @@ func (c *Config) hasEnrollmentKey() bool {
 		return false
 	}
 	info, err := os.Stat(c.EnrollmentKeyFile)
-	return err == nil && info.Mode().IsRegular() && info.Size() > 0
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	// Read, not just stat: the store trims the contents, so a whitespace-only file
+	// is no key at all — and accepting it here would drop the operator into a 401
+	// instead of the "--bootstrap-token is required" message they need.
+	raw, err := os.ReadFile(c.EnrollmentKeyFile) //nolint:gosec // the operator chooses the key path
+	return err == nil && strings.TrimSpace(string(raw)) != ""
 }
 
 // normalizeCredentialMode validates the credential mode and the secret file that
@@ -337,6 +348,13 @@ func (c *Config) normalizeCredentialMode() error {
 				ErrInvalidConfig, EnvSecretFile)
 		}
 	case CredentialModeControlPlane:
+		if c.Vendor != VendorGitLab {
+			return fmt.Errorf(
+				"%w: --credential-mode %s is supported for --vendor %s only, not %s: the "+
+					"credential would arrive over the tunnel and be replayed upstream as %s",
+				ErrInvalidConfig, CredentialModeControlPlane, VendorGitLab, c.Vendor,
+				"Authorization")
+		}
 		if c.SecretFile != "" {
 			return fmt.Errorf(
 				"%w: --secret-file must not be set with --credential-mode %s: the credential "+

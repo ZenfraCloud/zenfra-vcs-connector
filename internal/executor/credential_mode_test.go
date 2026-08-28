@@ -5,6 +5,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -19,14 +20,14 @@ import (
 const controlPlaneToken = "glpat-FROM-CONTROL-PLANE" //nolint:gosec // fake credential for tests
 
 // newControlPlaneExecutor builds an executor in control_plane credential mode,
-// which takes no secret file at all.
-func newControlPlaneExecutor(t *testing.T, endpoint, vendor string) (*Executor, *bytes.Buffer) {
+// which takes no secret file at all. GitLab is the only vendor the mode allows.
+func newControlPlaneExecutor(t *testing.T, endpoint string) (*Executor, *bytes.Buffer) {
 	t.Helper()
 	cfg, err := config.Load([]string{
 		"--gateway-url", "https://api.zenfra.cloud",
 		"--bootstrap-token", "vcsc_abc.def",
 		"--endpoint", endpoint,
-		"--vendor", vendor,
+		"--vendor", "gitlab",
 		"--instance-key", "connector-0",
 		"--all-projects",
 		"--credential-mode", "control_plane",
@@ -52,7 +53,7 @@ func TestControlPlaneMode_ForwardsTheTunneledCredential(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":7,"username":"zenfra"}`))
 	})
-	exec, audit := newControlPlaneExecutor(t, stub.srv.URL, "gitlab")
+	exec, audit := newControlPlaneExecutor(t, stub.srv.URL)
 
 	w := newFakeResponder()
 	exec.Handle(context.Background(), withHeaders(req(http.MethodGet, "/api/v4/user", ""),
@@ -70,29 +71,31 @@ func TestControlPlaneMode_ForwardsTheTunneledCredential(t *testing.T) {
 	}
 }
 
-func TestControlPlaneMode_ForwardsBearerForGitHub(t *testing.T) {
-	stub := newStub(t, func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"login":"zenfra"}`))
-	})
-	exec, _ := newControlPlaneExecutor(t, stub.srv.URL, "github")
-
-	w := newFakeResponder()
-	exec.Handle(context.Background(), withHeaders(req(http.MethodGet, "/api/v3/user", ""),
-		map[string][]string{"Authorization": {"Bearer " + controlPlaneToken}}), w)
-
-	if got := w.snapshot(); got.failure != nil {
-		t.Fatalf("Fail(%q: %q) — want success", got.failure.GetCode(), got.failure.GetMessage())
-	}
-	upstream, _ := stub.last()
-	if auth := upstream.Header.Get("Authorization"); auth != "Bearer "+controlPlaneToken {
-		t.Errorf("Authorization = %q, want the tunneled credential", auth)
+// control_plane is GitLab-only. For any other vendor the mode would take an
+// arbitrary Authorization header off the tunnel and replay it at the customer's
+// own server, so the connector refuses to start rather than relying on the
+// control plane never to send one.
+func TestControlPlaneMode_IsRefusedForNonGitLabVendors(t *testing.T) {
+	for _, vendor := range []string{"github", "bitbucket", "azure_devops"} {
+		t.Run(vendor, func(t *testing.T) {
+			_, err := config.Load([]string{
+				"--gateway-url", "https://api.zenfra.cloud",
+				"--bootstrap-token", "vcsc_abc.def",
+				"--endpoint", "https://vcs.internal",
+				"--vendor", vendor,
+				"--all-projects",
+				"--credential-mode", "control_plane",
+			}, func(string) string { return "" })
+			if !errors.Is(err, config.ErrInvalidConfig) {
+				t.Fatalf("config.Load() error = %v, want ErrInvalidConfig", err)
+			}
+		})
 	}
 }
 
 func TestControlPlaneMode_MissingCredentialIsAnAuthFailure(t *testing.T) {
 	stub := newStub(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	exec, _ := newControlPlaneExecutor(t, stub.srv.URL, "gitlab")
+	exec, _ := newControlPlaneExecutor(t, stub.srv.URL)
 
 	w := newFakeResponder()
 	exec.Handle(context.Background(), req(http.MethodGet, "/api/v4/user", ""), w)
@@ -110,7 +113,7 @@ func TestControlPlaneMode_StillRefusesOtherCredentialHeaders(t *testing.T) {
 	for _, name := range []string{"Authorization", "Cookie", "X-Api-Key", "Job-Token"} {
 		t.Run(name, func(t *testing.T) {
 			stub := newStub(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-			exec, _ := newControlPlaneExecutor(t, stub.srv.URL, "gitlab")
+			exec, _ := newControlPlaneExecutor(t, stub.srv.URL)
 
 			w := newFakeResponder()
 			exec.Handle(context.Background(), withHeaders(req(http.MethodGet, "/api/v4/user", ""),
@@ -132,7 +135,7 @@ func TestControlPlaneMode_StillRefusesOtherCredentialHeaders(t *testing.T) {
 
 func TestControlPlaneMode_DeniedRequestNeverReachesUpstream(t *testing.T) {
 	stub := newStub(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	exec, _ := newControlPlaneExecutor(t, stub.srv.URL, "gitlab")
+	exec, _ := newControlPlaneExecutor(t, stub.srv.URL)
 
 	w := newFakeResponder()
 	exec.Handle(context.Background(), withHeaders(req(http.MethodDelete, "/api/v4/projects/42", ""),

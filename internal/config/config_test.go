@@ -740,6 +740,74 @@ func TestLoadControlPlaneCredentialModeRejectsSecretFile(t *testing.T) {
 	}
 }
 
+// control_plane injects whatever the tunnel sent into the vendor's credential
+// header — Authorization for every vendor but GitLab. The connector is the
+// customer-side trust boundary, so it refuses the pairing itself rather than
+// relying on the control plane to.
+func TestLoadControlPlaneCredentialModeIsGitLabOnly(t *testing.T) {
+	for _, vendor := range []string{"github", "bitbucket", "azure_devops"} {
+		t.Run(vendor, func(t *testing.T) {
+			_, err := Load([]string{
+				"--gateway-url", "https://api.zenfra.cloud",
+				"--bootstrap-token", testBootstrapToken,
+				"--endpoint", "https://vcs.internal",
+				"--vendor", vendor,
+				"--all-projects",
+				"--credential-mode", "control_plane",
+			}, env(nil))
+			if !errors.Is(err, ErrInvalidConfig) {
+				t.Fatalf("Load() error = %v, want ErrInvalidConfig", err)
+			}
+			if !strings.Contains(err.Error(), "gitlab") {
+				t.Errorf("error = %q, want it to name the only supported vendor", err)
+			}
+		})
+	}
+}
+
+// A ConfigMap or base64'd k8s secret carries a trailing newline; untrimmed it
+// becomes an invalid Authorization header value, which net/http refuses as a
+// transport error the registration client retries forever.
+func TestLoadTrimsBootstrapToken(t *testing.T) {
+	cfg, err := Load([]string{
+		"--gateway-url", "https://api.zenfra.cloud",
+		"--endpoint", "https://gitlab.internal",
+		"--vendor", "gitlab",
+		"--secret-file", "/etc/zenfra/gitlab-token",
+		"--allowed-projects", "42",
+	}, env(map[string]string{EnvBootstrapToken: "  " + testBootstrapToken + "\n"}))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.BootstrapToken != testBootstrapToken {
+		t.Errorf("BootstrapToken = %q, want it trimmed", cfg.BootstrapToken)
+	}
+}
+
+// hasEnrollmentKey must agree with the store, which trims: a whitespace-only key
+// file is no key, and accepting it drops the operator into a 401 instead of the
+// message that names the missing flag.
+func TestLoadWhitespaceEnrollmentKeyStillRequiresBootstrapToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "enrollment-key")
+	if err := os.WriteFile(path, []byte("   \n"), 0o600); err != nil {
+		t.Fatalf("writing key file: %v", err)
+	}
+	_, err := Load([]string{
+		"--gateway-url", "https://api.zenfra.cloud",
+		"--endpoint", "https://gitlab.internal",
+		"--vendor", "gitlab",
+		"--secret-file", "/etc/zenfra/gitlab-token",
+		"--allowed-projects", "42",
+		"--enrollment-key-file", path,
+	}, env(nil))
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("Load() error = %v, want ErrInvalidConfig", err)
+	}
+	if !strings.Contains(err.Error(), "--bootstrap-token") {
+		t.Errorf("error = %q, want it to name --bootstrap-token", err)
+	}
+}
+
 func TestLoadRejectsUnknownCredentialMode(t *testing.T) {
 	_, err := Load(append(validArgs(), "--credential-mode", "whatever"), env(nil))
 	if !errors.Is(err, ErrInvalidConfig) {

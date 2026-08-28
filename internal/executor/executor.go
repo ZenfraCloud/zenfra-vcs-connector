@@ -523,6 +523,10 @@ func (e *Executor) stream(
 	dec.StampHeader(header)
 	hasBody := responseHasBody(dec.Method, resp.StatusCode)
 	if err := w.Head(resp.StatusCode, header, hasBody); err != nil {
+		// Error, not just Reason: the audit record only escalates to WARN and only
+		// counts as a failure when a code is set, and an exchange that never
+		// reached the gateway is not a clean allow.
+		rec.Error = tunnel.ErrCodeOutcomeUnknown
 		rec.Reason = "sending response head: " + err.Error()
 		return
 	}
@@ -558,6 +562,7 @@ func (e *Executor) stream(
 		return
 	}
 	if err := w.Close(); err != nil {
+		rec.Error = tunnel.ErrCodeOutcomeUnknown
 		rec.Reason = "closing response body: " + err.Error()
 	}
 }

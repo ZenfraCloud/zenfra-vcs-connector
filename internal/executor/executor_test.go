@@ -277,6 +277,32 @@ func TestHandle_DeniedRequestNeverReadsSecretOrReachesUpstream(t *testing.T) {
 	}
 }
 
+// A credential in the query is the header check's twin: the control plane must
+// not be able to ride the connector's own upstream session by appending
+// ?private_token= to an otherwise allowlisted call.
+func TestHandle_RejectsCredentialsInTheQuery(t *testing.T) {
+	for _, query := range []string{"private_token=glpat-stolen", "sudo=root", "ref=main&access_token=abc"} {
+		t.Run(query, func(t *testing.T) {
+			stub := newStub(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+			exec, _ := newExecutor(t, stub.srv.URL, newSecretFile(t, testSecret))
+
+			w := newFakeResponder()
+			exec.Handle(context.Background(),
+				req(http.MethodGet, "/api/v4/projects/1/repository/tree", query), w)
+
+			got := w.snapshot()
+			if got.failure == nil || got.failure.GetCode() != tunnel.ErrCodePolicyDenied {
+				t.Fatalf("failure = %v, want %s", got.failure, tunnel.ErrCodePolicyDenied)
+			}
+			if stub.count() != 0 {
+				t.Errorf("request with a credential query reached upstream %d times", stub.count())
+			}
+		})
+	}
+}
+
 // Driven off rejectedRequestHeaders itself: a header removed from the table
 // would otherwise be silently stripped instead of refused, which is exactly the
 // laundering the table exists to prevent.

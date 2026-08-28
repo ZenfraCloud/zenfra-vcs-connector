@@ -40,9 +40,13 @@ and still logs one audit record per request with no credential in it.
 Connector (both flags, or their `ZENFRA_VCS_CONNECTOR_*` env equivalents):
 
 ```
---credential-mode control_plane     # default: agent_local
+--credential-mode control_plane     # default: agent_local, GitLab only
 # --secret-file must NOT be set: there is no local credential to read
 ```
+
+GitLab is the only vendor this mode supports — it is the only credential Zenfra
+stores. The connector refuses to start with any other `--vendor`, rather than
+accepting an `Authorization` header off the tunnel and replaying it upstream.
 
 The connector prints a startup warning naming the mode. An instance left on the
 default refuses an injected credential with a `protocol` error, so switching

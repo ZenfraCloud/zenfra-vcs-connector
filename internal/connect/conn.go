@@ -43,8 +43,12 @@ const maxFrameBytes = tunnel.MaxChunkBytes + 32*1024
 const (
 	// defaultPongWait must exceed the gateway's ping interval (30s) by enough to
 	// tolerate two missed pings.
-	defaultPongWait         = 70 * time.Second
-	defaultWriteWait        = 10 * time.Second
+	defaultPongWait  = 70 * time.Second
+	defaultWriteWait = 10 * time.Second
+	// defaultBulkWriteWait governs the bulk lane. The gateway tolerates a 60s gap
+	// between response body chunks, so a shorter wait here would kill an archive
+	// download the gateway was still willing to wait for.
+	defaultBulkWriteWait    = 90 * time.Second
 	defaultHandshakeTimeout = 15 * time.Second
 	defaultOutboundQueue    = 8
 )
@@ -63,6 +67,9 @@ type ConnConfig struct {
 	PongWait time.Duration
 	// WriteWait bounds one frame write and the wait for outbound queue space.
 	WriteWait time.Duration
+	// BulkWriteWait replaces WriteWait on the bulk lane, where a stalled consumer
+	// downstream of the gateway is normal backpressure rather than a dead peer.
+	BulkWriteWait time.Duration
 	// HandshakeTimeout bounds the WebSocket upgrade.
 	HandshakeTimeout time.Duration
 	// OutboundQueue is the depth of the per-connection write queue.
@@ -74,6 +81,7 @@ func DefaultConnConfig() ConnConfig {
 	return ConnConfig{
 		PongWait:         defaultPongWait,
 		WriteWait:        defaultWriteWait,
+		BulkWriteWait:    defaultBulkWriteWait,
 		HandshakeTimeout: defaultHandshakeTimeout,
 		OutboundQueue:    defaultOutboundQueue,
 	}
@@ -220,7 +228,11 @@ func (d *Dialer) Dial(ctx context.Context, token string, lane Lane) (*Conn, erro
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return newConn(conn, d.Config, d.Handler, logger.With("lane", string(lane))), nil
+	cfg := d.Config
+	if lane == LaneBulk && cfg.BulkWriteWait > 0 {
+		cfg.WriteWait = cfg.BulkWriteWait
+	}
+	return newConn(conn, cfg, d.Handler, logger.With("lane", string(lane))), nil
 }
 
 // Conn is one tunnel connection. It carries a single exchange at a time, matching

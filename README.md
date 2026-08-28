@@ -19,7 +19,7 @@ docker run --rm \
   -e ZENFRA_VCS_CONNECTOR_BOOTSTRAP_TOKEN=vcsc_... \
   -e ZENFRA_VCS_CONNECTOR_ENDPOINT=https://gitlab.internal \
   -e ZENFRA_VCS_CONNECTOR_VENDOR=gitlab \
-  -e ZENFRA_VCS_CONNECTOR_ALLOWED_PROJECTS=acme/infra \
+  -e ZENFRA_VCS_CONNECTOR_ALLOWED_PROJECTS=42 \
   -e ZENFRA_VCS_CONNECTOR_SECRET_FILE=/run/secrets/vcs-token \
   -v /path/to/token:/run/secrets/vcs-token:ro \
   ghcr.io/zenfracloud/zenfra-vcs-connector:latest
@@ -41,7 +41,7 @@ kubectl create secret generic zenfra-vcs-connector \
 helm install vcs-connector deploy/helm/zenfra-vcs-connector \
   --set connector.gatewayUrl=https://api.zenfra.cloud \
   --set connector.endpoint=https://gitlab.internal \
-  --set 'connector.allowedProjects={acme/infra}' \
+  --set 'connector.allowedProjects={42}' \
   --set secret.name=zenfra-vcs-connector
 ```
 

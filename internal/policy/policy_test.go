@@ -206,6 +206,46 @@ func TestEvaluateDeniesEverythingElse(t *testing.T) {
 	}
 }
 
+// TestEvaluateDeniesCredentialsInTheQuery drives the credential-query defense
+// through Evaluate rather than through CanonicalizeQuery directly: an allowlisted
+// path must still be refused when the control plane rides the connector's own
+// upstream session with ?private_token= or ?sudo=.
+func TestEvaluateDeniesCredentialsInTheQuery(t *testing.T) {
+	queries := []string{
+		"private_token=glpat-secret",
+		"access_token=abc",
+		"api_key=abc",
+		"job_token=abc",
+		"personal_token=abc",
+		"sudo=root",
+		"token=abc",
+		"ref=main&private_token=glpat-secret",
+		"PRIVATE_TOKEN=glpat-secret",
+	}
+	e := engine(t)
+	for _, query := range queries {
+		t.Run(query, func(t *testing.T) {
+			dec := e.Evaluate("GET", "/api/v4/projects/42/repository/tree", query)
+			if dec.Allowed {
+				t.Fatalf("Evaluate(?%s) allowed via %q, want denied", query, dec.RuleID)
+			}
+			if !strings.Contains(dec.Reason, "credential") {
+				t.Errorf("Reason = %q, want it to mention a credential", dec.Reason)
+			}
+			if dec.Path != "" || dec.Query != "" {
+				t.Errorf("Path/Query = %q/%q, want empty so a denied request can never be sent",
+					dec.Path, dec.Query)
+			}
+		})
+	}
+
+	// The same query is legitimate on a redirect the upstream itself minted.
+	if dec := e.EvaluateRedirect("GET", "/api/v4/projects/42/repository/tree",
+		"private_token=upstream-minted"); !dec.Allowed {
+		t.Fatalf("EvaluateRedirect denied an upstream-minted query: %s", dec.Reason)
+	}
+}
+
 // TestDenyReasonCarriesRuleLevelDetail proves a denial says which rule was
 // involved, not just "denied".
 func TestDenyReasonCarriesRuleLevelDetail(t *testing.T) {

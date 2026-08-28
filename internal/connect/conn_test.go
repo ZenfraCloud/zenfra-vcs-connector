@@ -217,6 +217,28 @@ func TestDialSendsTokenAndFingerprint(t *testing.T) {
 	}
 }
 
+// The bulk lane gets its own write patience: the gateway tolerates a 60s gap
+// between response body chunks, so a 10s wait here would close the connection
+// mid-archive over backpressure the gateway was still willing to absorb.
+func TestDialGivesTheBulkLaneALongerWriteWait(t *testing.T) {
+	g := newStubGateway(t, false)
+	d := testDialer(func(context.Context, *Request, *Responder) {})
+
+	bulk, _ := dialStub(t, g, d, LaneBulk)
+	if bulk.cfg.WriteWait != d.Config.BulkWriteWait {
+		t.Errorf("bulk WriteWait = %v, want %v", bulk.cfg.WriteWait, d.Config.BulkWriteWait)
+	}
+	if d.Config.BulkWriteWait <= d.Config.WriteWait {
+		t.Errorf("BulkWriteWait = %v, want more than the interactive %v",
+			d.Config.BulkWriteWait, d.Config.WriteWait)
+	}
+
+	interactive, _ := dialStub(t, g, d, LaneInteractive)
+	if interactive.cfg.WriteWait != d.Config.WriteWait {
+		t.Errorf("interactive WriteWait = %v, want %v", interactive.cfg.WriteWait, d.Config.WriteWait)
+	}
+}
+
 func TestDialRejectsNonHTTPGatewayURL(t *testing.T) {
 	d := testDialer(nil)
 	d.GatewayURL = "ftp://api.zenfra.cloud"

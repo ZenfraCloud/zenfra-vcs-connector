@@ -70,7 +70,10 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 
 	engine, err := policy.NewEngine(cfg)
 	if err != nil {
-		return fmt.Errorf("building policy engine: %w", err)
+		// Same exit-code contract as the executor and dialer below: the only way
+		// this fails is an unsupported vendor, which is "fix your flags" and must
+		// not restart-loop under a supervisor.
+		return fmt.Errorf("%w: building policy engine: %w", config.ErrInvalidConfig, err)
 	}
 	logger.Info("policy compiled", "rules", len(engine.Rules()), "policy_hash", engine.PolicyHash())
 
