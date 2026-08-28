@@ -101,8 +101,15 @@ func NewRegistrationClient(tlsCfg *tls.Config) *http.Client {
 	}
 	transport := base.Clone()
 	transport.Proxy = http.ProxyFromEnvironment
+	// Cloned, never shared: the cloned DefaultTransport keeps ForceAttemptHTTP2,
+	// and net/http appends "h2" to NextProtos of whatever *tls.Config it is
+	// handed, in place, on the first round trip. The caller passes the same
+	// config the WebSocket dialer holds, and registration always runs first — so
+	// sharing it would make every later tunnel dial offer h2, which gorilla
+	// cannot speak. Against an ALPN-h2 terminator that is a permanent dial
+	// failure the supervisor retries forever.
 	if tlsCfg != nil {
-		transport.TLSClientConfig = tlsCfg
+		transport.TLSClientConfig = tlsCfg.Clone()
 	}
 	return &http.Client{Timeout: 30 * time.Second, Transport: transport}
 }

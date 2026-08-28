@@ -110,10 +110,28 @@ func TestBlocklistModeDeniesEncodedDenySegments(t *testing.T) {
 		}
 	}
 
-	// An encoded namespace is one path position; "admin" inside it is not.
-	dec := e.Evaluate("GET", "/api/v4/projects/admin%2Fplatform/pipelines", "")
-	if !dec.Allowed {
-		t.Errorf("Evaluate() denied an encoded project path: %s", dec.Reason)
+	// %2F does not buy an exemption. An upstream that decodes before it routes
+	// sees these as ordinary path positions, so the table has to see them too.
+	for _, path := range []string{
+		"/api/v4/admin%2Fci%2Fvariables",
+		"/api/v4/projects/1/hooks%2Fnew",
+		"/api/v4/users%2F7%2Fpersonal_access_tokens",
+		// Not listed: /api/v4/projects/42%2Fvariables matches the compiled
+		// gitlab.project.get rule, where %2F is an ordinary project-id character
+		// — a reviewed rule, not the deny table's business.
+	} {
+		dec := e.Evaluate("GET", path, "")
+		if dec.Allowed {
+			t.Errorf("Evaluate(GET %s) was allowed; %%2F must not skip the deny table", path)
+		}
+	}
+
+	// Trailing dots and spaces are stripped by Windows-derived stacks, so the
+	// table is consulted on the stripped form too.
+	for _, path := range []string{"/api/v4/hooks%20", "/api/v4/HOOKS%2E"} {
+		if dec := e.Evaluate("GET", path, ""); dec.Allowed {
+			t.Errorf("Evaluate(GET %s) was allowed, want denied by the deny table", path)
+		}
 	}
 }
 

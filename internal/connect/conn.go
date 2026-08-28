@@ -373,6 +373,16 @@ func (c *Conn) startExchange(ctx context.Context, env *tunnel.Envelope) error {
 	requestID := env.GetRequestId()
 
 	c.mu.Lock()
+	// Close snapshots c.current once. It closes c.closed before taking c.mu, so a
+	// startExchange that wins the lock afterwards would publish an exchange
+	// nothing ever aborts: the socket is shut, no BodyChunk can arrive, and the
+	// handler goroutine blocks on its body pipe for the process's lifetime.
+	select {
+	case <-c.closed:
+		c.mu.Unlock()
+		return errors.New("connect: connection closed")
+	default:
+	}
 	// The gateway carries one exchange at a time per stream, so a second request
 	// can only mean it stopped waiting for the previous one: the caller closed the
 	// response body early, the body idle timeout fired, or a cancel went

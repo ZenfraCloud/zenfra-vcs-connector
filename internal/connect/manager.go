@@ -298,7 +298,12 @@ func (t *tokenSource) get(ctx context.Context) (string, error) {
 // rejected enrollment key is never retried with the bootstrap token: that is the
 // revocation this whole mechanism exists to make stick.
 func (t *tokenSource) register(ctx context.Context) (*Instance, error) {
-	credential := t.enrollment.load()
+	credential, err := t.enrollment.load()
+	if err != nil {
+		// Not a fallback to the bootstrap token: an unreadable key file must not
+		// look like a host that never enrolled.
+		return nil, err
+	}
 	enrolled := credential != ""
 	if !enrolled {
 		credential = t.bootstrapToken

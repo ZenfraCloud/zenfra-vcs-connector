@@ -78,8 +78,10 @@ const (
 const DefaultInteractiveConnections = 3
 
 // maxInteractiveConnections bounds --interactive-connections. The gateway caps
-// the live streams one connector may hold, so a larger fleet needs more
-// instances, not more lanes per instance.
+// the live streams one *connector* may hold — instances share that budget, so
+// each instance costs (--interactive-connections + 1) streams and the ceiling is
+// 64 / (interactive + 1) instances: 16 at the default of 3, 3 at this maximum.
+// Past it the gateway answers 503; raise the lane count only for a small fleet.
 const maxInteractiveConnections = 16
 
 // Environment variables, each mirroring the flag of the same name.

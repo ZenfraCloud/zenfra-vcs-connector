@@ -3,7 +3,9 @@
 package connect
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,18 +19,23 @@ type enrollmentStore struct{ path string }
 // enabled reports whether a key file is configured.
 func (s enrollmentStore) enabled() bool { return s.path != "" }
 
-// load returns the stored key, or "" when none is configured or readable. A
-// missing or unreadable file is not an error: the connector falls back to the
-// bootstrap token and re-enrolls, which is exactly what a fresh host needs.
-func (s enrollmentStore) load() string {
+// load returns the stored key, or "" when none is configured or the file does
+// not exist yet — a fresh host falls back to the bootstrap token and enrolls.
+// Any other read error is returned: a permissions change or an unmounted volume
+// is indistinguishable from a fresh host otherwise, and the fallback would
+// re-enrol a revoked instance on the fleet-wide credential.
+func (s enrollmentStore) load() (string, error) {
 	if !s.enabled() {
-		return ""
+		return "", nil
 	}
 	raw, err := os.ReadFile(s.path) // #nosec G304 -- operator-supplied path, same as the credential file
-	if err != nil {
-		return ""
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
 	}
-	return strings.TrimSpace(string(raw))
+	if err != nil {
+		return "", fmt.Errorf("reading enrollment key: %w", err)
+	}
+	return strings.TrimSpace(string(raw)), nil
 }
 
 // save writes the key 0600, replacing any previous one atomically so a crash

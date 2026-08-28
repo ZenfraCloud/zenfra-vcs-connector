@@ -103,14 +103,14 @@ func TestEnrollmentStoreRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "enrollment-key")
 	store := enrollmentStore{path: path}
 
-	if got := store.load(); got != "" {
-		t.Errorf("load() with no file = %q, want empty", got)
+	if got, err := store.load(); err != nil || got != "" {
+		t.Errorf("load() with no file = %q, %v, want empty and no error", got, err)
 	}
 	if err := store.save("vcsi_abc.first"); err != nil {
 		t.Fatalf("save() error = %v", err)
 	}
-	if got := store.load(); got != "vcsi_abc.first" {
-		t.Errorf("load() = %q, want the saved key", got)
+	if got, err := store.load(); err != nil || got != "vcsi_abc.first" {
+		t.Errorf("load() = %q, %v, want the saved key", got, err)
 	}
 
 	info, err := os.Stat(path)
@@ -125,8 +125,8 @@ func TestEnrollmentStoreRoundTrip(t *testing.T) {
 	if err := store.save("vcsi_abc.second"); err != nil {
 		t.Fatalf("save() error = %v", err)
 	}
-	if got := store.load(); got != "vcsi_abc.second" {
-		t.Errorf("load() after re-save = %q, want the new key", got)
+	if got, err := store.load(); err != nil || got != "vcsi_abc.second" {
+		t.Errorf("load() after re-save = %q, %v, want the new key", got, err)
 	}
 
 	// No stray temp files survive.
@@ -147,8 +147,8 @@ func TestEnrollmentStoreDisabledIsANoOp(t *testing.T) {
 	if err := store.save("vcsi_abc.key"); err != nil {
 		t.Errorf("save() on a disabled store error = %v, want nil", err)
 	}
-	if got := store.load(); got != "" {
-		t.Errorf("load() on a disabled store = %q, want empty", got)
+	if got, err := store.load(); err != nil || got != "" {
+		t.Errorf("load() on a disabled store = %q, %v, want empty and no error", got, err)
 	}
 
 	// An empty key is nothing to persist, even with a path.
@@ -250,5 +250,30 @@ func TestTokenSourceSurvivesAnUnwritableKeyFile(t *testing.T) {
 
 	if _, err := newEnrollTokenSource(plane, path).get(context.Background()); err != nil {
 		t.Fatalf("a token that works must not be discarded over a failed key write: %v", err)
+	}
+}
+
+// An unreadable key file is not a fresh host: falling back to the fleet-wide
+// bootstrap token there would re-enrol an instance an operator revoked.
+func TestEnrollmentStoreUnreadableKeyIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "enrollment-key")
+	if err := os.WriteFile(path, []byte("vcsi_abc.key"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a 0000 file regardless of mode")
+	}
+
+	got, err := (enrollmentStore{path: path}).load()
+	if err == nil {
+		t.Fatalf("load() on an unreadable key = %q, nil; want an error", got)
+	}
+	if got != "" {
+		t.Errorf("load() returned %q alongside its error, want empty", got)
 	}
 }

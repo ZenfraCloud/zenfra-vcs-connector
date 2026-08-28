@@ -284,7 +284,7 @@ func (e *Executor) Handle(ctx context.Context, req *connect.Request, w Responder
 
 	for followed := 0; dec.RedirectsTo != "" && followed < maxRedirectsFollowed &&
 		isRedirect(resp.StatusCode); followed++ {
-		next := e.followPinnedRedirect(callCtx, &dec, resp, w, rec)
+		next := e.followPinnedRedirect(ctx, callCtx, &dec, resp, w, rec)
 		if next == nil {
 			return
 		}
@@ -440,8 +440,10 @@ func (e *Executor) authorize(req *http.Request, token string) {
 // allowlist and sent to the origin the operator pinned, so a Location naming
 // another host moves nothing. Returns the replacement response, or nil after
 // having failed the exchange.
+// ctx is the exchange's (cancellation), callCtx the upstream call's (deadline).
 func (e *Executor) followPinnedRedirect(
-	ctx context.Context, dec *policy.Decision, resp *http.Response, w Responder, rec *auditRecord,
+	ctx, callCtx context.Context,
+	dec *policy.Decision, resp *http.Response, w Responder, rec *auditRecord,
 ) *http.Response {
 	location := resp.Header.Get("Location")
 	if location == "" {
@@ -464,7 +466,7 @@ func (e *Executor) followPinnedRedirect(
 	}
 	rec.RedirectOrigin = string(next.Origin)
 
-	followed, err := e.buildRequest(ctx, &next, nil, nil)
+	followed, err := e.buildRequest(callCtx, &next, nil, nil)
 	if err != nil {
 		rec.Reason = err.Error()
 		e.fail(w, rec, tunnel.ErrCodeProtocol, rec.Reason, false, tunnel.ErrorOrigin_ERROR_ORIGIN_CONNECTOR)
@@ -472,7 +474,14 @@ func (e *Executor) followPinnedRedirect(
 	}
 	next2, err := e.client.Do(followed)
 	if err != nil {
-		code, message := classifyUpstreamError(err, ctx)
+		// Same discipline as the first leg: a cancelled exchange owes the gateway a
+		// CancelAck, not an upstream_timeout the caller is told to retry. The first
+		// leg already got a status line, so the outcome is completed.
+		if ctx.Err() != nil {
+			e.ack(w, rec, cancelOutcome(phaseCompleted))
+			return nil
+		}
+		code, message := classifyUpstreamError(err, callCtx)
 		rec.Reason = message
 		e.fail(w, rec, code, message, code != tunnel.ErrCodeUpstreamTLS, tunnel.ErrorOrigin_ERROR_ORIGIN_UPSTREAM)
 		return nil

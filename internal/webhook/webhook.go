@@ -228,9 +228,17 @@ func normalizeEventType(raw string) string {
 // synchronously so an unusable address fails startup instead of never serving.
 func (l *Listener) Serve(addr string) (stop func(), err error) {
 	srv := &http.Server{
-		Addr:              addr,
-		Handler:           l.Handler(),
+		Addr:    addr,
+		Handler: l.Handler(),
+		// ReadTimeout, not just ReadHeaderTimeout: the handler buffers the body
+		// before it verifies the signature, so without a whole-request deadline an
+		// unauthenticated client holds a goroutine and an fd indefinitely by
+		// dribbling one byte at a time — and the connector is the customer's only
+		// tunnel process.
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {

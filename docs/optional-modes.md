@@ -89,6 +89,13 @@ surfaces, plus every `DELETE`).
   allowlist, not a gap to be closed by adding entries.
 - **Project scoping does not apply to unlisted paths**, so the mode requires
   `--all-projects`. The connector refuses to start otherwise.
+- **The deny table is consulted on the percent-decoded form, component by
+  component.** An upstream that decodes `%2F` before it routes would otherwise
+  reach `admin%2Fci%2Fvariables` with the table never checked. The cost is a
+  false positive: a group or project whose name is itself a deny word — a
+  namespace literally called `admin`, `users` or `hooks` — is refused even
+  when it appears URL-encoded in a legitimate project path. Use the default
+  allowlist mode if you have one.
 
 Allowed requests still pass canonicalization (no traversal, no double encoding,
 no absolute URLs, no control characters), still go to the pinned endpoint, and

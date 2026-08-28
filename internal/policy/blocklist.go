@@ -78,21 +78,35 @@ func blocklistDecide(dec *Decision, path, query string) {
 
 // deniedSegment returns the first deny-table segment in a canonical path, or "".
 // Both the raw and the decoded segment are compared: the upstream sees the
-// decoded form, so %61dmin must not slip past the table, while a segment that
-// decodes to several components is an encoded project path whose inner parts are
-// not path positions of their own and must not be matched.
+// decoded form, so %61dmin must not slip past the table. A segment that decodes
+// to several components is checked component by component — an upstream that
+// decodes %2F before routing would otherwise reach admin%2Fci%2Fvariables with
+// the table never consulted.
 func deniedSegment(path string) string {
 	for _, segment := range strings.Split(path, "/") {
-		if lower := strings.ToLower(segment); deniedSegments[lower] {
+		if lower := denyLookup(segment); lower != "" {
 			return lower
 		}
 		decoded, err := url.PathUnescape(segment)
-		if err != nil || strings.Contains(decoded, "/") {
+		if err != nil {
 			continue
 		}
-		if lower := strings.ToLower(decoded); deniedSegments[lower] {
-			return lower
+		for _, part := range strings.Split(decoded, "/") {
+			if lower := denyLookup(part); lower != "" {
+				return lower
+			}
 		}
+	}
+	return ""
+}
+
+// denyLookup normalizes one path component the way an upstream filesystem or
+// router would — case-folded, with the trailing dots and spaces Windows-derived
+// stacks strip — and returns it when the deny table holds it.
+func denyLookup(component string) string {
+	lower := strings.TrimRight(strings.ToLower(component), ". ")
+	if deniedSegments[lower] {
+		return lower
 	}
 	return ""
 }

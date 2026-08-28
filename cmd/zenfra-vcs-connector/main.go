@@ -194,7 +194,15 @@ func serveMetrics(
 
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", collector.Handler())
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{
+		Handler: mux,
+		// Same reasoning as the webhook listener: a header deadline alone leaves a
+		// slow-body client holding a goroutine and an fd for as long as it likes.
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	go func() {
 		if serveErr := srv.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			logger.Error("metrics endpoint stopped", "error", serveErr)
