@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -202,5 +203,37 @@ func TestClassifyUpstreamError(t *testing.T) {
 				t.Error("message is empty")
 			}
 		})
+	}
+}
+
+// deliverCancel fails the request body pipe with context.Canceled, because the
+// handler buffers the body with a read no context interrupts. That is a
+// cancellation, not a protocol violation: the upstream call is provably still
+// ahead of the read, so the honest — and retryable — answer is not_sent.
+func TestHandle_CancelDuringBodyReadReportsNotSent(t *testing.T) {
+	stub := newStub(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	})
+	exec, _ := newExecutor(t, stub.srv.URL, newSecretFile(t, testSecret))
+
+	r := req(http.MethodPost, "/api/v4/projects/42/merge_requests/7/notes", "")
+	r.Head.HasBody = true
+	body, writer := io.Pipe()
+	r.Body = body
+	// Exactly what deliverCancel does to a body that is still arriving.
+	_ = writer.CloseWithError(context.Canceled)
+
+	w := newFakeResponder()
+	exec.Handle(context.Background(), r, w)
+
+	got := w.snapshot()
+	if got.ack == nil {
+		t.Fatalf("no CancelAck (failure=%v)", got.failure)
+	}
+	if got.ack.GetOutcome() != tunnel.CancelOutcome_CANCEL_OUTCOME_NOT_SENT {
+		t.Errorf("outcome = %v, want NOT_SENT", got.ack.GetOutcome())
+	}
+	if stub.count() != 0 {
+		t.Errorf("cancelled request still reached upstream (%d hits)", stub.count())
 	}
 }

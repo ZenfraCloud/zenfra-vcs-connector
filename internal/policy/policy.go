@@ -43,6 +43,8 @@ type Rule struct {
 	RedirectsTo Origin
 
 	pattern *regexp.Regexp
+	// query constrains the canonical query string when non-nil.
+	query *regexp.Regexp
 	// capturesProject marks rules whose pattern captures a project identifier.
 	capturesProject bool
 }
@@ -194,6 +196,10 @@ func (e *Engine) evaluate(
 			project, rule.ID)
 		return dec
 	}
+	if rule.query != nil && !rule.query.MatchString(query) {
+		dec.Reason = fmt.Sprintf("query is not allowed on %s (rule %s)", path, rule.ID)
+		return dec
+	}
 
 	dec.Allowed, dec.Path, dec.Query = true, path, query
 	return dec
@@ -268,8 +274,12 @@ func policyHash(vendor config.Vendor, mode config.PolicyMode, rules []Rule) stri
 		b.WriteString(denyTableFingerprint(string(mode)))
 	}
 	for _, rule := range rules {
-		fmt.Fprintf(&b, "%s %s %s %s %s\n",
-			rule.Method, rule.pattern.String(), rule.ID, rule.Origin, rule.RedirectsTo)
+		var query string
+		if rule.query != nil {
+			query = rule.query.String()
+		}
+		fmt.Fprintf(&b, "%s %s %s %s %s %s\n",
+			rule.Method, rule.pattern.String(), rule.ID, rule.Origin, rule.RedirectsTo, query)
 	}
 	digest := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(digest[:])
@@ -337,6 +347,10 @@ func gitLabRules() []Rule {
 type ruleSpec struct {
 	id, purpose, method, pattern string
 	origin, redirectsTo          Origin
+	// query, when set, is an anchored pattern the canonical query string must
+	// match. Only rules whose path carries no project — and therefore cannot be
+	// scoped by --allowed-projects — need it.
+	query string
 }
 
 // compile turns rule specs into matchable rules. Every capture group in a pattern
@@ -353,6 +367,10 @@ func compile(specs []ruleSpec) []Rule {
 		if origin == "" {
 			origin = OriginPrimary
 		}
+		var query *regexp.Regexp
+		if spec.query != "" {
+			query = regexp.MustCompile(spec.query)
+		}
 		rules = append(rules, Rule{
 			ID:              spec.id,
 			Purpose:         spec.purpose,
@@ -360,6 +378,7 @@ func compile(specs []ruleSpec) []Rule {
 			Origin:          origin,
 			RedirectsTo:     spec.redirectsTo,
 			pattern:         pattern,
+			query:           query,
 			capturesProject: pattern.NumSubexp() > 0,
 		})
 	}

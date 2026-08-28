@@ -306,6 +306,14 @@ func (e *Executor) readRequestBody(req *connect.Request, w Responder, rec *audit
 	}
 	buf, err := io.ReadAll(io.LimitReader(req.Body, e.limits.MaxRequestBytes+1))
 	if err != nil {
+		// deliverCancel fails the body pipe with context.Canceled, which is a
+		// cancellation, not a protocol violation. The upstream call is provably
+		// still ahead of us, so the honest answer is NOT_SENT — a retryable
+		// outcome, where an Error{protocol} would tell the gateway not to retry.
+		if errors.Is(err, context.Canceled) {
+			e.ack(w, rec, tunnel.CancelOutcome_CANCEL_OUTCOME_NOT_SENT)
+			return nil, false
+		}
 		rec.Reason = "reading tunneled request body: " + err.Error()
 		e.fail(w, rec, tunnel.ErrCodeProtocol, rec.Reason, false, tunnel.ErrorOrigin_ERROR_ORIGIN_CONNECTOR)
 		return nil, false

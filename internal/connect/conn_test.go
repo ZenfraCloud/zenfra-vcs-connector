@@ -555,9 +555,15 @@ func TestConnCancelOutsideAnExchange(t *testing.T) {
 }
 
 func TestConnProtocolViolationsEndTheConnection(t *testing.T) {
+	// blockUntilDone keeps the exchange in flight for cases whose violation is
+	// only a violation while the request is still open: once the handler answers,
+	// settle moves the ID to lastID and a late chunk is legitimately dropped.
+	blockUntilDone := func(ctx context.Context, _ *Request, _ *Responder) { <-ctx.Done() }
+
 	tests := []struct {
-		name  string
-		drive func(t *testing.T, conn *websocket.Conn)
+		name    string
+		handler Handler
+		drive   func(t *testing.T, conn *websocket.Conn)
 	}{
 		{
 			name: "request id reused after settling",
@@ -570,14 +576,16 @@ func TestConnProtocolViolationsEndTheConnection(t *testing.T) {
 			},
 		},
 		{
-			name: "chunk sequence gap",
+			name:    "chunk sequence gap",
+			handler: blockUntilDone,
 			drive: func(t *testing.T, conn *websocket.Conn) {
 				send(t, conn, requestEnv("r1", true))
 				send(t, conn, chunkEnv(3, []byte("gap"), true))
 			},
 		},
 		{
-			name: "body chunk for a bodiless request",
+			name:    "body chunk for a bodiless request",
+			handler: blockUntilDone,
 			drive: func(t *testing.T, conn *websocket.Conn) {
 				send(t, conn, requestEnv("r1", false))
 				send(t, conn, chunkEnv(0, []byte("nope"), true))
@@ -616,10 +624,14 @@ func TestConnProtocolViolationsEndTheConnection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := newStubGateway(t, false)
-			// A body reader that is never drained must not wedge the read pump.
-			d := testDialer(func(_ context.Context, _ *Request, w *Responder) {
-				_ = w.Head(http.StatusOK, nil, false)
-			})
+			handler := tt.handler
+			if handler == nil {
+				// A body reader that is never drained must not wedge the read pump.
+				handler = func(_ context.Context, _ *Request, w *Responder) {
+					_ = w.Head(http.StatusOK, nil, false)
+				}
+			}
+			d := testDialer(handler)
 			_, served := dialStub(t, g, d, LaneInteractive)
 			conn := g.next(t)
 
@@ -906,4 +918,45 @@ func newStubProxy(t *testing.T) (proxyURL *url.URL, targets chan string) {
 		t.Fatalf("parsing proxy URL: %v", err)
 	}
 	return proxyURL, targets
+}
+
+// A re-sent request ID for the exchange that is still in flight is a protocol
+// violation, but the still-blocked handler must not be stranded by it: without
+// the cancel the body pipe is never closed, the handler never returns, and its
+// goroutine plus its buffered body leak for the process's lifetime.
+func TestConnDuplicateOfInFlightRequestStillTearsDownTheHandler(t *testing.T) {
+	g := newStubGateway(t, false)
+	started := make(chan struct{})
+	readErr := make(chan error, 1)
+	d := testDialer(func(_ context.Context, r *Request, _ *Responder) {
+		close(started)
+		// The same unbounded read the executor does — nothing cancels it but a
+		// closed body pipe.
+		_, err := io.ReadAll(r.Body)
+		readErr <- err
+	})
+	_, served := dialStub(t, g, d, LaneInteractive)
+	conn := g.next(t)
+
+	send(t, conn, requestEnv("r1", true))
+	<-started
+	send(t, conn, requestEnv("r1", true))
+
+	select {
+	case err := <-served:
+		if err == nil {
+			t.Error("Serve() error = nil, want a duplicate request id violation")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the connection stayed open after a duplicate request id")
+	}
+
+	select {
+	case err := <-readErr:
+		if err == nil {
+			t.Error("the handler's body read returned nil, want the aborted pipe error")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the in-flight handler was never torn down — its goroutine leaked")
+	}
 }

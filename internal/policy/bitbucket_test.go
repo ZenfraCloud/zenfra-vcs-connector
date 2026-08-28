@@ -30,45 +30,47 @@ func TestAllowlistCoversTheBitbucketDataCenterSurface(t *testing.T) {
 	tests := []struct {
 		method      string
 		path        string
+		query       string
 		wantRule    string
 		wantProject string
 	}{
-		{"GET", "/rest/api/1.0/users", "bitbucket.user.current", ""},
-		{"GET", "/rest/api/1.0/repos", "bitbucket.repos.list", ""},
-		{"GET", repo, "bitbucket.repo.get", "ENG/platform"},
-		{"GET", repo + "/browse", "bitbucket.repo.browse", "ENG/platform"},
-		{"GET", repo + "/browse/infra/main.tf", "bitbucket.repo.browse", "ENG/platform"},
-		{"GET", repo + "/raw/infra/main.tf", "bitbucket.repo.raw", "ENG/platform"},
-		{"GET", repo + "/branches", "bitbucket.branches.list", "ENG/platform"},
-		{"GET", repo + "/branches/default", "bitbucket.branches.default", "ENG/platform"},
-		{"GET", repo + "/commits", "bitbucket.commits.list", "ENG/platform"},
-		{"GET", repo + "/commits/abc123", "bitbucket.commit.get", "ENG/platform"},
-		{"GET", repo + "/commits/abc123/diff", "bitbucket.commit.diff", "ENG/platform"},
-		{"GET", repo + "/commits/abc123/changes", "bitbucket.commit.changes", "ENG/platform"},
-		{"GET", repo + "/archive", "bitbucket.repository.archive", "ENG/platform"},
-		{"GET", repo + "/pull-requests", "bitbucket.pull_requests.list", "ENG/platform"},
-		{"GET", repo + "/pull-requests/7", "bitbucket.pull_request.get", "ENG/platform"},
-		{"GET", repo + "/pull-requests/7/changes", "bitbucket.pull_request.changes", "ENG/platform"},
-		{"GET", repo + "/pull-requests/7/diff", "bitbucket.pull_request.diff", "ENG/platform"},
+		{method: "GET", path: "/rest/api/1.0/users", query: "limit=1",
+			wantRule: "bitbucket.user.current"},
+		{method: "GET", path: "/rest/api/1.0/repos", wantRule: "bitbucket.repos.list", wantProject: ""},
+		{method: "GET", path: repo, wantRule: "bitbucket.repo.get", wantProject: "ENG/platform"},
+		{method: "GET", path: repo + "/browse", wantRule: "bitbucket.repo.browse", wantProject: "ENG/platform"},
+		{method: "GET", path: repo + "/browse/infra/main.tf", wantRule: "bitbucket.repo.browse", wantProject: "ENG/platform"},
+		{method: "GET", path: repo + "/raw/infra/main.tf", wantRule: "bitbucket.repo.raw", wantProject: "ENG/platform"},
+		{method: "GET", path: repo + "/branches", wantRule: "bitbucket.branches.list", wantProject: "ENG/platform"},
+		{method: "GET", path: repo + "/branches/default", wantRule: "bitbucket.branches.default", wantProject: "ENG/platform"},
+		{method: "GET", path: repo + "/commits", wantRule: "bitbucket.commits.list", wantProject: "ENG/platform"},
+		{method: "GET", path: repo + "/commits/abc123", wantRule: "bitbucket.commit.get", wantProject: "ENG/platform"},
+		{method: "GET", path: repo + "/commits/abc123/diff", wantRule: "bitbucket.commit.diff", wantProject: "ENG/platform"},
+		{method: "GET", path: repo + "/commits/abc123/changes", wantRule: "bitbucket.commit.changes", wantProject: "ENG/platform"},
+		{method: "GET", path: repo + "/archive", wantRule: "bitbucket.repository.archive", wantProject: "ENG/platform"},
+		{method: "GET", path: repo + "/pull-requests", wantRule: "bitbucket.pull_requests.list", wantProject: "ENG/platform"},
+		{method: "GET", path: repo + "/pull-requests/7", wantRule: "bitbucket.pull_request.get", wantProject: "ENG/platform"},
+		{method: "GET", path: repo + "/pull-requests/7/changes", wantRule: "bitbucket.pull_request.changes", wantProject: "ENG/platform"},
+		{method: "GET", path: repo + "/pull-requests/7/diff", wantRule: "bitbucket.pull_request.diff", wantProject: "ENG/platform"},
 		{
-			"GET", repo + "/pull-requests/7/comments",
-			"bitbucket.pull_request.comments.list", "ENG/platform",
+			method: "GET", path: repo + "/pull-requests/7/comments",
+			wantRule: "bitbucket.pull_request.comments.list", wantProject: "ENG/platform",
 		},
 		{
-			"POST", repo + "/pull-requests/7/comments",
-			"bitbucket.pull_request.comment.create", "ENG/platform",
+			method: "POST", path: repo + "/pull-requests/7/comments",
+			wantRule: "bitbucket.pull_request.comment.create", wantProject: "ENG/platform",
 		},
 		{
-			"PUT", repo + "/pull-requests/7/comments/9",
-			"bitbucket.pull_request.comment.update", "ENG/platform",
+			method: "PUT", path: repo + "/pull-requests/7/comments/9",
+			wantRule: "bitbucket.pull_request.comment.update", wantProject: "ENG/platform",
 		},
-		{"GET", repo + "/commits/abc123/builds", "bitbucket.build_statuses.list", "ENG/platform"},
-		{"POST", repo + "/commits/abc123/builds", "bitbucket.build_status.set", "ENG/platform"},
+		{method: "GET", path: repo + "/commits/abc123/builds", wantRule: "bitbucket.build_statuses.list", wantProject: "ENG/platform"},
+		{method: "POST", path: repo + "/commits/abc123/builds", wantRule: "bitbucket.build_status.set", wantProject: "ENG/platform"},
 	}
 	e := bitbucketEngine(t)
 	for _, tt := range tests {
 		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
-			dec := e.Evaluate(tt.method, tt.path, "")
+			dec := e.Evaluate(tt.method, tt.path, tt.query)
 			if !dec.Allowed {
 				t.Fatalf("Evaluate(%s %s) denied: %s", tt.method, tt.path, dec.Reason)
 			}
@@ -126,6 +128,19 @@ func TestBitbucketAllowlistDeniesEverythingElse(t *testing.T) {
 
 // Bitbucket splits the repository identity across two path segments; scoping
 // still compares the "PROJECT/repo" string an operator configures.
+// TestBitbucketUserDirectoryCannotBePaged proves the pinned query on
+// bitbucket.user.current is what keeps the rule an identity check: /users is the
+// instance's user directory, it captures no project, so --allowed-projects
+// cannot scope it and only the query stops it becoming a directory dump.
+func TestBitbucketUserDirectoryCannotBePaged(t *testing.T) {
+	e := bitbucketEngine(t)
+	for _, query := range []string{"", "limit=1000", "limit=1&start=25", "start=0", "limit=2"} {
+		if dec := e.Evaluate("GET", "/rest/api/1.0/users", query); dec.Allowed {
+			t.Errorf("Evaluate(GET /rest/api/1.0/users?%s) allowed, want denied", query)
+		}
+	}
+}
+
 func TestBitbucketProjectScopingJoinsProjectAndRepo(t *testing.T) {
 	e := bitbucketEngine(t, "ENG/platform")
 
@@ -149,7 +164,7 @@ func TestBitbucketProjectScopingJoinsProjectAndRepo(t *testing.T) {
 		t.Fatal("out-of-scope project allowed, want denied")
 	}
 	// The identity call is repository-independent and must stay reachable.
-	if dec := e.Evaluate("GET", "/rest/api/1.0/users", ""); !dec.Allowed {
+	if dec := e.Evaluate("GET", "/rest/api/1.0/users", "limit=1"); !dec.Allowed {
 		t.Fatalf("repository-independent rule denied: %s", dec.Reason)
 	}
 }

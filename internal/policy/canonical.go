@@ -135,6 +135,12 @@ func canonicalizeQuery(raw string, upstreamMinted bool) (string, error) {
 	if err := rejectUnsafeRunes(raw, "query"); err != nil {
 		return "", err
 	}
+	// The path is re-escaped from url.EscapedPath before it goes on the wire; the
+	// query is forwarded byte for byte, so it is the only half with no backstop
+	// against a literal space splitting the request line at a proxy.
+	if err := rejectUnencodedQueryBytes(raw); err != nil {
+		return "", err
+	}
 	if strings.Contains(raw, "#") {
 		return "", errors.New("query must not contain a fragment")
 	}
@@ -162,7 +168,11 @@ var authQueryKeys = map[string]bool{
 	"job_token":      true,
 	"personal_token": true,
 	"private_token":  true,
-	"token":          true,
+	// sudo is GitLab's impersonation parameter: with an admin PAT it makes the
+	// upstream execute the call as another user. The header half is already
+	// dropped by the forwardable-header allowlist; this is the surviving half.
+	"sudo":  true,
+	"token": true,
 }
 
 // rejectUnsafeRunes denies control characters (header/request smuggling) and
@@ -174,6 +184,21 @@ func rejectUnsafeRunes(s, what string) error {
 			return fmt.Errorf("%s must not contain a control character (0x%02x at %d)", what, c, i)
 		case c == '\\':
 			return fmt.Errorf("%s must not contain a backslash (at %d)", what, i)
+		}
+	}
+	return nil
+}
+
+// rejectUnencodedQueryBytes denies bytes a canonical query must carry
+// percent-encoded: a space, which splits the HTTP request line, and anything
+// above ASCII, which no two intermediaries agree how to interpret.
+func rejectUnencodedQueryBytes(s string) error {
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == ' ':
+			return fmt.Errorf("query must percent-encode spaces (at %d)", i)
+		case c > 0x7e:
+			return fmt.Errorf("query must percent-encode non-ASCII bytes (0x%02x at %d)", c, i)
 		}
 	}
 	return nil

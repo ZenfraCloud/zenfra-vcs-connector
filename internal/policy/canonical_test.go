@@ -135,6 +135,15 @@ func TestCanonicalizeQuery(t *testing.T) {
 		{name: "oauth access token", raw: "ref=main&access_token=x", wantErr: "credential"},
 		{name: "job token", raw: "job_token=x", wantErr: "credential"},
 		{name: "bare token", raw: "TOKEN=x", wantErr: "credential"},
+		// sudo is GitLab impersonation: with an admin PAT the upstream executes
+		// the allowlisted call as somebody else, which is the escalation the
+		// forwardable-header allowlist already blocks on the header half.
+		{name: "gitlab sudo", raw: "sudo=root", wantErr: "credential"},
+		{name: "gitlab sudo mixed case", raw: "ref=main&Sudo=root", wantErr: "credential"},
+		// The query is forwarded byte for byte, so a literal space would put two
+		// extra SP-delimited tokens on the request line.
+		{name: "unencoded space", raw: "search=a b", wantErr: "percent-encode spaces"},
+		{name: "non-ascii byte", raw: "search=caf\u00e9", wantErr: "percent-encode non-ASCII"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

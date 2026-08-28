@@ -24,8 +24,12 @@ func bitbucketRules() []Rule {
 		// ponytail: /users requires authentication, and Data Center names the
 		// authenticated user in the X-AUSERNAME response header — that pair is
 		// how verify observes an identity without a "current user" endpoint.
+		// The path captures no project, so --allowed-projects cannot scope it and
+		// the resource itself is the instance's user directory (names, emails).
+		// The query is pinned to the single-row page verify actually asks for, so
+		// the rule cannot be turned into a directory dump.
 		{id: "bitbucket.user.current", purpose: "Get Current User", method: "GET",
-			pattern: `^/rest/api/1\.0/users$`},
+			pattern: `^/rest/api/1\.0/users$`, query: `^limit=1$`},
 		// ponytail: the repository list exposes names outside --allowed-projects,
 		// which repo discovery needs. Response filtering, if ever wanted, belongs
 		// in the discovery service, not the path allowlist.

@@ -367,13 +367,17 @@ func (c *Conn) startExchange(ctx context.Context, env *tunnel.Envelope) error {
 	// unacknowledged. Supersede the stale exchange instead of failing the
 	// connection, which would take every other in-flight request with it.
 	stale := c.current
+	// Checked before the supersede below mutates anything: on this error path the
+	// stale exchange stays c.current, so Close aborts its body pipe and its
+	// handler goroutine settles. Detaching it first would strand both for the
+	// process's lifetime.
+	if requestID == c.lastID || (stale != nil && stale.requestID == requestID) {
+		c.mu.Unlock()
+		return fmt.Errorf("%w: %w: %q", ErrProtocol, tunnel.ErrDuplicateRequestID, requestID)
+	}
 	if stale != nil {
 		c.current = nil
 		c.lastID = stale.requestID
-	}
-	if requestID == c.lastID {
-		c.mu.Unlock()
-		return fmt.Errorf("%w: %w: %q", ErrProtocol, tunnel.ErrDuplicateRequestID, requestID)
 	}
 
 	exCtx, cancel := context.WithCancel(ctx)
