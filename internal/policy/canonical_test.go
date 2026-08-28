@@ -62,6 +62,10 @@ func TestCanonicalizePathRejects(t *testing.T) {
 		{"encoded traversal", "/api/v4/%2e%2e/admin/users", "dot segment"},
 		{"encoded traversal uppercase", "/api/v4/%2E%2E/admin/users", "dot segment"},
 		{"traversal inside encoded segment", "/api/v4/projects/eng%2F..%2Fother", "dot segment"},
+		// Tomcat/Jetty strip ;path-parameters before resolving dot segments, so
+		// "..;" would match a rule verbatim and traverse upstream.
+		{"path parameter traversal", "/rest/api/1.0/projects/P/repos/r/browse/..;/..;/admin", "path parameter"},
+		{"encoded path parameter traversal", "/rest/api/1.0/projects/P/repos/r/browse/%2E%2E;/admin", "path parameter"},
 		{"double encoding", "/api/v4/%252e%252e/admin/users", "double-encoded"},
 		{"double encoded slash", "/api/v4/projects/eng%252Fplatform", "double-encoded"},
 		{"backslash", "/api/v4\\admin\\users", "backslash"},

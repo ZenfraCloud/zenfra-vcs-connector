@@ -112,10 +112,23 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 	defer stopWebhooks()
 
 	if err := manager.Run(ctx); err != nil {
-		return fmt.Errorf("tunnel stopped: %w", err)
+		return classifyTunnelError(err)
 	}
 	logger.Info("zenfra-vcs-connector stopped")
 	return nil
+}
+
+// classifyTunnelError decides whether a stopped tunnel is a misconfiguration.
+// A 4xx from the control plane — a refused credential, a vendor or endpoint that
+// disagrees with the registration, a policy hash the connector is not pinned to
+// — is "fix your flags", not "try again"; without ErrInvalidConfig the process
+// exits 1 and a supervisor restart-loops it against the gateway forever.
+func classifyTunnelError(err error) error {
+	var apiErr *connect.APIError
+	if errors.As(err, &apiErr) && !apiErr.Retryable() {
+		return fmt.Errorf("%w: tunnel stopped: %w", config.ErrInvalidConfig, err)
+	}
+	return fmt.Errorf("tunnel stopped: %w", err)
 }
 
 // warnOptionalModes says out loud, once per start, that this connector is not

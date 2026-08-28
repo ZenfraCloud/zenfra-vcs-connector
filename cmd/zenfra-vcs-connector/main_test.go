@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/config"
+	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/connect"
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/metrics"
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/webhook"
 	"github.com/ZenfraCloud/zenfra-vcs-connector/tunnel"
@@ -336,5 +337,21 @@ func TestWarnOptionalModesWarnsOnTheOptIns(t *testing.T) {
 		if !strings.Contains(logged, want) {
 			t.Errorf("warning output %q is missing %q", logged, want)
 		}
+	}
+}
+
+// A permanently-refused credential must exit 2, not 1: a supervisor keyed on the
+// exit code would otherwise restart-loop a typo against the gateway.
+func TestClassifyTunnelError(t *testing.T) {
+	refused := &connect.APIError{Status: http.StatusUnauthorized, Code: "unauthorized"}
+	if err := classifyTunnelError(refused); !errors.Is(err, config.ErrInvalidConfig) {
+		t.Fatalf("a refused credential should be a misconfiguration, got %v", err)
+	}
+	overloaded := &connect.APIError{Status: http.StatusServiceUnavailable, Code: "unavailable"}
+	if err := classifyTunnelError(overloaded); errors.Is(err, config.ErrInvalidConfig) {
+		t.Fatal("a 5xx is retryable, not a misconfiguration")
+	}
+	if err := classifyTunnelError(errors.New("connection reset")); errors.Is(err, config.ErrInvalidConfig) {
+		t.Fatal("a transport failure is retryable, not a misconfiguration")
 	}
 }

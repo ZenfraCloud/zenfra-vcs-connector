@@ -143,7 +143,15 @@ func (l *Listener) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		l.logger.Info("the control plane refused a webhook delivery",
 			"event_type", eventType, "delivery_id", deliveryID,
 			"code", ack.GetCode(), "message", ack.GetMessage())
-		// A refusal is final — a redelivery would be refused identically.
+		if ack.GetCode() != tunnel.ErrCodePolicyDenied {
+			// Only policy_denied is final. connector_busy (the gateway's
+			// in-flight cap) and protocol (a transient control-plane failure)
+			// both want the vendor to redeliver; 204 would tell it the push
+			// landed and the run would simply never happen.
+			http.Error(w, "try again", http.StatusServiceUnavailable)
+			return
+		}
+		// A policy refusal is final — a redelivery would be refused identically.
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

@@ -339,3 +339,21 @@ func TestNormalizeEventType(t *testing.T) {
 		}
 	}
 }
+
+// connector_busy and protocol are the gateway's transient refusals — the vendor
+// has to redeliver, or the push is lost and the run never happens.
+func TestTransientRefusalAsksForRedelivery(t *testing.T) {
+	for _, code := range []string{tunnel.ErrCodeConnectorBusy, tunnel.ErrCodeProtocol} {
+		t.Run(code, func(t *testing.T) {
+			relay := &stubRelay{ack: &tunnel.EventAck{Code: code}}
+			l := testListener(t, config.VendorGitLab, relay)
+
+			rec := httptest.NewRecorder()
+			l.Handler().ServeHTTP(rec, gitlabPush(`{"object_kind":"push"}`))
+
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503", rec.Code)
+			}
+		})
+	}
+}

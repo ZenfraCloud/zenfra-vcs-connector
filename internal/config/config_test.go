@@ -4,6 +4,8 @@ package config
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -847,5 +849,30 @@ func TestLoadBootstrapTokenFallsBackToTheEnvironment(t *testing.T) {
 	}
 	if cfg.BootstrapToken != testBootstrapToken {
 		t.Errorf("BootstrapToken = %q, want the environment value", cfg.BootstrapToken)
+	}
+}
+
+// Task 20's point: once an instance has enrolled it presents its own key, so the
+// fleet-wide bootstrap token can be unmounted instead of living on every host.
+func TestBootstrapTokenOptionalOnceEnrolled(t *testing.T) {
+	keyFile := filepath.Join(t.TempDir(), "enrollment.key")
+	base := []string{
+		"--gateway-url", "https://api.zenfra.cloud",
+		"--endpoint", "https://gitlab.internal",
+		"--vendor", "gitlab",
+		"--secret-file", "/etc/zenfra/gitlab-token",
+		"--all-projects",
+		"--enrollment-key-file", keyFile,
+	}
+
+	if _, err := Load(base, env(nil)); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("without a stored key the bootstrap token is still required, got %v", err)
+	}
+
+	if err := os.WriteFile(keyFile, []byte("vcsk_stored"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(base, env(nil)); err != nil {
+		t.Fatalf("a stored enrollment key should stand in for the bootstrap token: %v", err)
 	}
 }

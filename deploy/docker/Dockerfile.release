@@ -1,6 +1,9 @@
 # ABOUTME: Release image for the VCS Connector, wrapping the goreleaser-built binary.
 # ABOUTME: Distroless static base — no shell, no package manager, nothing to exec into.
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY zenfra-vcs-connector /usr/local/bin/zenfra-vcs-connector
+# goreleaser's dockers_v2 stages one binary per platform under <os>/<arch>/, so
+# the copy has to dereference the platform buildkit is currently building for.
+ARG TARGETPLATFORM
+COPY $TARGETPLATFORM/zenfra-vcs-connector /usr/local/bin/zenfra-vcs-connector
 USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/zenfra-vcs-connector"]

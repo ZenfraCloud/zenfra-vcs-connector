@@ -286,7 +286,6 @@ func (c *Config) checkRequired() error {
 		value, flag, env string
 	}{
 		{c.GatewayURL, "--gateway-url", EnvGatewayURL},
-		{c.BootstrapToken, "--bootstrap-token", EnvBootstrapToken},
 		{c.Endpoint, "--endpoint", EnvEndpoint},
 		{string(c.Vendor), "--vendor", EnvVendor},
 	} {
@@ -295,7 +294,24 @@ func (c *Config) checkRequired() error {
 				ErrInvalidConfig, required.flag, required.env)
 		}
 	}
+	// Once this instance has enrolled it presents its own persisted key, so the
+	// fleet-wide bootstrap token can be unmounted — which is the whole point of
+	// per-instance enrollment. Demand it only when there is no key to fall back on.
+	if strings.TrimSpace(c.BootstrapToken) == "" && !c.hasEnrollmentKey() {
+		return fmt.Errorf("%w: --bootstrap-token is required (or set %s) "+
+			"until this instance has enrolled and persisted an enrollment key",
+			ErrInvalidConfig, EnvBootstrapToken)
+	}
 	return nil
+}
+
+// hasEnrollmentKey reports whether a non-empty enrollment key is already on disk.
+func (c *Config) hasEnrollmentKey() bool {
+	if strings.TrimSpace(c.EnrollmentKeyFile) == "" {
+		return false
+	}
+	info, err := os.Stat(c.EnrollmentKeyFile)
+	return err == nil && info.Mode().IsRegular() && info.Size() > 0
 }
 
 // normalizeCredentialMode validates the credential mode and the secret file that

@@ -51,6 +51,14 @@ func CanonicalizePath(raw string) (string, error) {
 	if strings.Contains(raw, "@") {
 		return "", errors.New("path must not contain @ (userinfo)")
 	}
+	// Tomcat and Jetty — what Bitbucket Data Center and other self-managed VCS
+	// servers run on — strip ;path-parameters from each segment before resolving
+	// dot segments, so "..;" matches an allowlist rule as an opaque segment and
+	// then normalizes upstream to "..". Zenfra's own path builders never emit a
+	// bare ; (url.PathEscape encodes it as %3B), so rejecting it costs nothing.
+	if strings.Contains(raw, ";") {
+		return "", errors.New("path must not contain a path parameter (;)")
+	}
 
 	segments := strings.Split(raw, "/")
 	for i, segment := range segments[1:] {
