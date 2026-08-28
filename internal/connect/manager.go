@@ -5,6 +5,7 @@ package connect
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
@@ -293,10 +294,17 @@ func (t *tokenSource) get(ctx context.Context) (string, error) {
 	return inst.Token, nil
 }
 
+// codeInstanceUnknown is the control plane's answer to an enrollment key whose
+// instance record was reclaimed (30 days without contact). Not a revocation: a
+// revoked instance keeps its tombstone and answers 403 instance_revoked.
+const codeInstanceUnknown = "instance_unknown"
+
 // register presents the stored enrollment key when there is one, and the
 // bootstrap token otherwise, persisting whatever key the response hands back. A
-// rejected enrollment key is never retried with the bootstrap token: that is the
-// revocation this whole mechanism exists to make stick.
+// refused enrollment key is never retried with the bootstrap token — that is the
+// revocation this whole mechanism exists to make stick — with one exception: a
+// key the control plane no longer recognises at all, which is a reclaimed
+// record, not a revoked one.
 func (t *tokenSource) register(ctx context.Context) (*Instance, error) {
 	credential, err := t.enrollment.load()
 	if err != nil {
@@ -310,6 +318,16 @@ func (t *tokenSource) register(ctx context.Context) (*Instance, error) {
 	}
 
 	inst, err := t.client.Register(ctx, credential, t.instanceKey, t.version)
+	if err != nil && enrolled && isInstanceUnknown(err) {
+		if t.bootstrapToken == "" {
+			return nil, fmt.Errorf("%w: the stored enrollment key names an instance the control "+
+				"plane no longer knows (its record is reclaimed after 30 days offline); start the "+
+				"connector with the bootstrap token to enrol again", err)
+		}
+		t.logger.Warn("stored enrollment key names an instance the control plane no longer knows; "+
+			"re-enrolling with the bootstrap token", "error", err)
+		inst, err = t.client.Register(ctx, t.bootstrapToken, t.instanceKey, t.version)
+	}
 	if err != nil {
 		if enrolled {
 			t.logger.Error("registration with the stored enrollment key was refused; "+
@@ -324,6 +342,14 @@ func (t *tokenSource) register(ctx context.Context) (*Instance, error) {
 		t.logger.Warn("could not persist the enrollment key", "error", saveErr)
 	}
 	return inst, nil
+}
+
+// isInstanceUnknown reports the one refusal register may answer with the
+// bootstrap token.
+func isInstanceUnknown(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) &&
+		apiErr.Status == http.StatusUnauthorized && apiErr.Code == codeInstanceUnknown
 }
 
 // invalidate drops token if it is still the current one, forcing a re-mint.

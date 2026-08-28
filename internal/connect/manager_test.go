@@ -235,7 +235,7 @@ func run(t *testing.T, m *Manager) (stop context.CancelFunc, result chan error) 
 func TestBackoffIsCappedAndJittered(t *testing.T) {
 	const base, capped = time.Second, 30 * time.Second
 	for attempt := range 10 {
-		want := min(base<<uint(attempt), capped)
+		want := min(base<<attempt, capped)
 		if attempt > 30 { // guard against shift overflow in the test itself
 			want = capped
 		}

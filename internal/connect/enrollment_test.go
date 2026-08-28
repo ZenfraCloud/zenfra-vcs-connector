@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -32,6 +33,9 @@ type enrollPlane struct {
 	presented []string
 	// rejectEnrolled refuses registrations made with an enrollment key.
 	rejectEnrolled bool
+	// forgetEnrolled answers an enrollment key with 401 instance_unknown, as the
+	// API does once the TTL has reclaimed the instance record.
+	forgetEnrolled bool
 	issued         int
 }
 
@@ -45,6 +49,7 @@ func newEnrollPlane(t *testing.T) *enrollPlane {
 		p.mu.Lock()
 		p.presented = append(p.presented, credential)
 		reject := p.rejectEnrolled && credential != testBootstrapAuth
+		forget := p.forgetEnrolled && credential != testBootstrapAuth
 		p.issued++
 		key := "vcsi_i1.secret-" + string(rune('0'+p.issued%10))
 		p.mu.Unlock()
@@ -53,6 +58,13 @@ func newEnrollPlane(t *testing.T) *enrollPlane {
 			w.WriteHeader(http.StatusForbidden)
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"error": "instance_revoked", "message": "this connector instance has been revoked",
+			})
+			return
+		}
+		if forget {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": "instance_unknown", "message": "this enrollment key's instance no longer exists",
 			})
 			return
 		}
@@ -221,6 +233,77 @@ func TestTokenSourceNeverFallsBackToBootstrapAfterRevocation(t *testing.T) {
 		if i > 0 && credential == testBootstrapAuth {
 			t.Error("the connector must not retry registration with the bootstrap token")
 		}
+	}
+}
+
+// A host that was offline longer than the record TTL comes back holding a key
+// for an instance the control plane has forgotten. That is not a revocation —
+// a revoked instance keeps its tombstone and answers 403 — so the connector
+// re-enrols with the bootstrap token it still has, instead of stopping.
+func TestTokenSourceReEnrolsWithBootstrapWhenTheInstanceIsUnknown(t *testing.T) {
+	plane := newEnrollPlane(t)
+	path := filepath.Join(t.TempDir(), "enrollment-key")
+
+	if _, err := newEnrollTokenSource(plane, path).get(context.Background()); err != nil {
+		t.Fatalf("first get() error = %v", err)
+	}
+
+	plane.mu.Lock()
+	plane.forgetEnrolled = true
+	plane.mu.Unlock()
+
+	if _, err := newEnrollTokenSource(plane, path).get(context.Background()); err != nil {
+		t.Fatalf("get() after the record expired must re-enrol, got %v", err)
+	}
+
+	got := plane.credentials()
+	want := []string{testBootstrapAuth, testEnrollmentAuth, testBootstrapAuth}
+	if len(got) != len(want) {
+		t.Fatalf("registrations = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("registration %d presented %q, want %q", i, got[i], want[i])
+		}
+	}
+
+	stored, err := os.ReadFile(path) //nolint:gosec // test-controlled path
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(stored) == testEnrollmentKey || !strings.HasPrefix(string(stored), "vcsi_") {
+		t.Errorf("stored key = %q, want the freshly issued one", stored)
+	}
+}
+
+// Without a bootstrap token there is nothing to re-enrol with: the connector
+// must stop with an error that names the fix, and must not loop on the dead key.
+func TestTokenSourceStopsWhenTheInstanceIsUnknownAndNoBootstrapToken(t *testing.T) {
+	plane := newEnrollPlane(t)
+	path := filepath.Join(t.TempDir(), "enrollment-key")
+
+	if _, err := newEnrollTokenSource(plane, path).get(context.Background()); err != nil {
+		t.Fatalf("first get() error = %v", err)
+	}
+
+	plane.mu.Lock()
+	plane.forgetEnrolled = true
+	plane.mu.Unlock()
+
+	source := newEnrollTokenSource(plane, path)
+	source.bootstrapToken = ""
+	_, err := source.get(context.Background())
+	if err == nil {
+		t.Fatal("get() with a forgotten key and no bootstrap token must fail")
+	}
+	if IsRetryable(err) {
+		t.Errorf("a forgotten key with no way to re-enrol must stop, not retry: %v", err)
+	}
+	if !strings.Contains(err.Error(), "bootstrap token") {
+		t.Errorf("error = %q, want it to name the bootstrap token as the fix", err)
+	}
+	if got := plane.credentials(); len(got) != 2 {
+		t.Errorf("registrations = %v, want exactly the enrolment and one refused attempt", got)
 	}
 }
 
