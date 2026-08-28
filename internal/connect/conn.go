@@ -365,7 +365,7 @@ func (c *Conn) startExchange(ctx context.Context, env *tunnel.Envelope) error {
 	}
 	if requestID == c.lastID {
 		c.mu.Unlock()
-		return fmt.Errorf("%w: request id %q reused", ErrProtocol, requestID)
+		return fmt.Errorf("%w: %w: %q", ErrProtocol, tunnel.ErrDuplicateRequestID, requestID)
 	}
 
 	exCtx, cancel := context.WithCancel(ctx)
@@ -394,7 +394,15 @@ func (c *Conn) deliverChunk(env *tunnel.Envelope) error {
 	c.mu.Lock()
 	ex := c.current
 	if ex == nil || ex.requestID != env.GetRequestId() {
+		settled := env.GetRequestId() == c.lastID
 		c.mu.Unlock()
+		if settled {
+			// The handler already answered without draining the body — a policy
+			// denial refuses before reading it. The gateway streams the head and
+			// its chunks back to back, so the rest arrives after the refusal;
+			// dropping it keeps the connection, as the gateway does in reverse.
+			return nil
+		}
 		return fmt.Errorf("%w: body chunk for %q outside its exchange", ErrProtocol, env.GetRequestId())
 	}
 	if ex.chunks == nil {

@@ -269,94 +269,53 @@ const project = `([^/]+)`
 // here is denied, including every write beyond MR comments and commit statuses.
 // Smart-HTTP git endpoints are deliberately absent: archives travel the bulk lane.
 func gitLabRules() []Rule {
-	specs := []struct {
-		id, purpose, method, pattern string
-	}{
-		{"gitlab.user.current", "Get Current User", "GET", `^/api/v4/user$`},
+	// Every GitLab rule is served by the primary endpoint and follows no
+	// redirect, so neither column appears below.
+	return compile([]ruleSpec{
+		{id: "gitlab.user.current", purpose: "Get Current User", method: "GET",
+			pattern: `^/api/v4/user$`},
 		// ponytail: the project list exposes names outside --allowed-projects, which
 		// repo discovery needs. Response filtering, if ever wanted, belongs in the
 		// discovery service, not the path allowlist.
-		{"gitlab.projects.list", "List Projects", "GET", `^/api/v4/projects$`},
-		{"gitlab.project.get", "Get Project", "GET", `^/api/v4/projects/` + project + `$`},
-		{
-			"gitlab.repository.tree", "List Repository Tree", "GET",
-			`^/api/v4/projects/` + project + `/repository/tree$`,
-		},
-		{
-			"gitlab.branches.list", "List Branches", "GET",
-			`^/api/v4/projects/` + project + `/repository/branches$`,
-		},
-		{
-			"gitlab.branch.get", "Get Branch", "GET",
-			`^/api/v4/projects/` + project + `/repository/branches/[^/]+$`,
-		},
-		{
-			"gitlab.commits.list", "List Commits", "GET",
-			`^/api/v4/projects/` + project + `/repository/commits$`,
-		},
-		{
-			"gitlab.commit.get", "Get Commit", "GET",
-			`^/api/v4/projects/` + project + `/repository/commits/[^/]+$`,
-		},
-		{
-			"gitlab.commit.diff", "Get Commit Diff", "GET",
-			`^/api/v4/projects/` + project + `/repository/commits/[^/]+/diff$`,
-		},
-		{
-			"gitlab.commit.statuses.list", "List Commit Statuses", "GET",
-			`^/api/v4/projects/` + project + `/repository/commits/[^/]+/statuses$`,
-		},
-		{
-			"gitlab.repository.compare", "Compare Refs", "GET",
-			`^/api/v4/projects/` + project + `/repository/compare$`,
-		},
-		{
-			"gitlab.repository.file.raw", "Get Raw File", "GET",
-			`^/api/v4/projects/` + project + `/repository/files/[^/]+/raw$`,
-		},
-		{
-			"gitlab.repository.archive", "Download Repository Archive", "GET",
-			`^/api/v4/projects/` + project + `/repository/archive(?:\.tar\.gz|\.tar\.bz2|\.tar|\.zip)?$`,
-		},
-		{
-			"gitlab.merge_requests.list", "List Merge Requests", "GET",
-			`^/api/v4/projects/` + project + `/merge_requests$`,
-		},
-		{
-			"gitlab.merge_request.get", "Get Merge Request", "GET",
-			`^/api/v4/projects/` + project + `/merge_requests/[0-9]+$`,
-		},
-		{
-			"gitlab.merge_request.changes", "Get Merge Request Changes", "GET",
-			`^/api/v4/projects/` + project + `/merge_requests/[0-9]+/changes$`,
-		},
-		{
-			"gitlab.merge_request.notes.list", "List Merge Request Comments", "GET",
-			`^/api/v4/projects/` + project + `/merge_requests/[0-9]+/notes$`,
-		},
-		{
-			"gitlab.merge_request.notes.create", "Comment on Merge Request", "POST",
-			`^/api/v4/projects/` + project + `/merge_requests/[0-9]+/notes$`,
-		},
-		{
-			"gitlab.merge_request.notes.update", "Update Merge Request Comment", "PUT",
-			`^/api/v4/projects/` + project + `/merge_requests/[0-9]+/notes/[0-9]+$`,
-		},
-		{
-			"gitlab.commit.status.set", "Set Commit Status", "POST",
-			`^/api/v4/projects/` + project + `/statuses/[^/]+$`,
-		},
-	}
-
-	// Every GitLab rule is served by the primary endpoint and follows no
-	// redirect, so the table carries neither column.
-	gitLab := make([]ruleSpec, 0, len(specs))
-	for _, spec := range specs {
-		gitLab = append(gitLab, ruleSpec{
-			id: spec.id, purpose: spec.purpose, method: spec.method, pattern: spec.pattern,
-		})
-	}
-	return compile(gitLab)
+		{id: "gitlab.projects.list", purpose: "List Projects", method: "GET",
+			pattern: `^/api/v4/projects$`},
+		{id: "gitlab.project.get", purpose: "Get Project", method: "GET",
+			pattern: `^/api/v4/projects/` + project + `$`},
+		{id: "gitlab.repository.tree", purpose: "List Repository Tree", method: "GET",
+			pattern: `^/api/v4/projects/` + project + `/repository/tree$`},
+		{id: "gitlab.branches.list", purpose: "List Branches", method: "GET",
+			pattern: `^/api/v4/projects/` + project + `/repository/branches$`},
+		{id: "gitlab.branch.get", purpose: "Get Branch", method: "GET",
+			pattern: `^/api/v4/projects/` + project + `/repository/branches/[^/]+$`},
+		{id: "gitlab.commits.list", purpose: "List Commits", method: "GET",
+			pattern: `^/api/v4/projects/` + project + `/repository/commits$`},
+		{id: "gitlab.commit.get", purpose: "Get Commit", method: "GET",
+			pattern: `^/api/v4/projects/` + project + `/repository/commits/[^/]+$`},
+		{id: "gitlab.commit.diff", purpose: "Get Commit Diff", method: "GET",
+			pattern: `^/api/v4/projects/` + project + `/repository/commits/[^/]+/diff$`},
+		{id: "gitlab.commit.statuses.list", purpose: "List Commit Statuses", method: "GET",
+			pattern: `^/api/v4/projects/` + project + `/repository/commits/[^/]+/statuses$`},
+		{id: "gitlab.repository.compare", purpose: "Compare Refs", method: "GET",
+			pattern: `^/api/v4/projects/` + project + `/repository/compare$`},
+		{id: "gitlab.repository.file.raw", purpose: "Get Raw File", method: "GET",
+			pattern: `^/api/v4/projects/` + project + `/repository/files/[^/]+/raw$`},
+		{id: "gitlab.repository.archive", purpose: "Download Repository Archive", method: "GET",
+			pattern: `^/api/v4/projects/` + project + `/repository/archive(?:\.tar\.gz|\.tar\.bz2|\.tar|\.zip)?$`},
+		{id: "gitlab.merge_requests.list", purpose: "List Merge Requests", method: "GET",
+			pattern: `^/api/v4/projects/` + project + `/merge_requests$`},
+		{id: "gitlab.merge_request.get", purpose: "Get Merge Request", method: "GET",
+			pattern: `^/api/v4/projects/` + project + `/merge_requests/[0-9]+$`},
+		{id: "gitlab.merge_request.changes", purpose: "Get Merge Request Changes", method: "GET",
+			pattern: `^/api/v4/projects/` + project + `/merge_requests/[0-9]+/changes$`},
+		{id: "gitlab.merge_request.notes.list", purpose: "List Merge Request Comments", method: "GET",
+			pattern: `^/api/v4/projects/` + project + `/merge_requests/[0-9]+/notes$`},
+		{id: "gitlab.merge_request.notes.create", purpose: "Comment on Merge Request", method: "POST",
+			pattern: `^/api/v4/projects/` + project + `/merge_requests/[0-9]+/notes$`},
+		{id: "gitlab.merge_request.notes.update", purpose: "Update Merge Request Comment", method: "PUT",
+			pattern: `^/api/v4/projects/` + project + `/merge_requests/[0-9]+/notes/[0-9]+$`},
+		{id: "gitlab.commit.status.set", purpose: "Set Commit Status", method: "POST",
+			pattern: `^/api/v4/projects/` + project + `/statuses/[^/]+$`},
+	})
 }
 
 // ruleSpec is the source form of a rule: origins default to primary and a rule

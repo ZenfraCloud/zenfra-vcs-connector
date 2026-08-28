@@ -115,6 +115,13 @@ func TestCanonicalizeQuery(t *testing.T) {
 		{name: "control character", raw: "ref=ma\nin", wantErr: "control character"},
 		{name: "invalid escape", raw: "ref=%zz", wantErr: "percent-encoding"},
 		{name: "too long", raw: "ref=" + strings.Repeat("a", maxQueryBytes), wantErr: "too long"},
+		// GitLab honours ?private_token= as authentication, so a credential in the
+		// query would ride the connector's upstream session past the inbound
+		// credential-header refusal.
+		{name: "gitlab private token", raw: "private_token=glpat-x", wantErr: "credential"},
+		{name: "oauth access token", raw: "ref=main&access_token=x", wantErr: "credential"},
+		{name: "job token", raw: "job_token=x", wantErr: "credential"},
+		{name: "bare token", raw: "TOKEN=x", wantErr: "credential"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -109,10 +109,31 @@ func CanonicalizeQuery(raw string) (string, error) {
 	if strings.Contains(raw, "#") {
 		return "", errors.New("query must not contain a fragment")
 	}
-	if _, err := url.ParseQuery(raw); err != nil {
+	values, err := url.ParseQuery(raw)
+	if err != nil {
 		return "", fmt.Errorf("query has invalid percent-encoding or syntax: %w", err)
 	}
+	// A credential arriving in the query is the same thing the rejected inbound
+	// credential headers guard against: the control plane must never be able to
+	// ride this connector's upstream session.
+	for key := range values {
+		if authQueryKeys[strings.ToLower(key)] {
+			return "", fmt.Errorf("query must not carry a credential (%s)", key)
+		}
+	}
 	return raw, nil
+}
+
+// authQueryKeys are query parameters a supported vendor accepts as
+// authentication in place of a header. None of them is a legitimate parameter of
+// any allowlisted call, so refusing them costs nothing.
+var authQueryKeys = map[string]bool{
+	"access_token":   true,
+	"api_key":        true,
+	"job_token":      true,
+	"personal_token": true,
+	"private_token":  true,
+	"token":          true,
 }
 
 // rejectUnsafeRunes denies control characters (header/request smuggling) and

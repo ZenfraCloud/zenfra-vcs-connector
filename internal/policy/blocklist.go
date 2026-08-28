@@ -3,6 +3,7 @@
 package policy
 
 import (
+	"net/url"
 	"slices"
 	"strings"
 )
@@ -76,11 +77,20 @@ func blocklistDecide(dec *Decision, path, query string) {
 }
 
 // deniedSegment returns the first deny-table segment in a canonical path, or "".
-// Comparison is on the raw segment: an encoded project path is one segment and
-// cannot smuggle "admin" past the table as a decoded component.
+// Both the raw and the decoded segment are compared: the upstream sees the
+// decoded form, so %61dmin must not slip past the table, while a segment that
+// decodes to several components is an encoded project path whose inner parts are
+// not path positions of their own and must not be matched.
 func deniedSegment(path string) string {
 	for _, segment := range strings.Split(path, "/") {
 		if lower := strings.ToLower(segment); deniedSegments[lower] {
+			return lower
+		}
+		decoded, err := url.PathUnescape(segment)
+		if err != nil || strings.Contains(decoded, "/") {
+			continue
+		}
+		if lower := strings.ToLower(decoded); deniedSegments[lower] {
 			return lower
 		}
 	}

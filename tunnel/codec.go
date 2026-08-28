@@ -5,7 +5,6 @@ package tunnel
 import (
 	"errors"
 	"fmt"
-	"sync"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -145,35 +144,4 @@ func (s *ChunkSequencer) Accept(env *Envelope) error {
 	s.next++
 	s.terminal = chunk.GetTerminal()
 	return nil
-}
-
-// RequestIDRegistry enforces request-ID uniqueness across in-flight exchanges.
-type RequestIDRegistry struct {
-	mu  sync.Mutex
-	ids map[string]struct{}
-}
-
-func NewRequestIDRegistry() *RequestIDRegistry {
-	return &RequestIDRegistry{ids: make(map[string]struct{})}
-}
-
-// Claim reserves id; a second claim before Release fails with ErrDuplicateRequestID.
-func (r *RequestIDRegistry) Claim(id string) error {
-	if id == "" {
-		return ErrEmptyRequestID
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, ok := r.ids[id]; ok {
-		return fmt.Errorf("%w: %q", ErrDuplicateRequestID, id)
-	}
-	r.ids[id] = struct{}{}
-	return nil
-}
-
-// Release frees id for reuse once its exchange is fully settled.
-func (r *RequestIDRegistry) Release(id string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.ids, id)
 }

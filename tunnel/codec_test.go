@@ -266,23 +266,6 @@ func TestChunkSequencerViolations(t *testing.T) {
 	})
 }
 
-func TestRequestIDRegistry(t *testing.T) {
-	r := NewRequestIDRegistry()
-	if err := r.Claim("req-1"); err != nil {
-		t.Fatalf("first claim: %v", err)
-	}
-	if err := r.Claim("req-1"); !errors.Is(err, ErrDuplicateRequestID) {
-		t.Fatalf("duplicate claim err = %v, want %v", err, ErrDuplicateRequestID)
-	}
-	if err := r.Claim(""); !errors.Is(err, ErrEmptyRequestID) {
-		t.Fatalf("empty claim err = %v, want %v", err, ErrEmptyRequestID)
-	}
-	r.Release("req-1")
-	if err := r.Claim("req-1"); err != nil {
-		t.Fatalf("claim after release: %v", err)
-	}
-}
-
 func TestErrorCodesAreStable(t *testing.T) {
 	// These codes are wire contract — renaming one breaks deployed connectors.
 	want := map[string]string{

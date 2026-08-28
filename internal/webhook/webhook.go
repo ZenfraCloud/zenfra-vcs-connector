@@ -28,14 +28,18 @@ const Path = "/webhook"
 // timeout so the connector answers before the vendor gives up on it.
 const relayTimeout = 10 * time.Second
 
-// Vendor header names. GitLab authenticates with the secret token verbatim;
-// GitHub Enterprise and Bitbucket Data Center sign the body with HMAC-SHA256.
+// Vendor header names. GitLab authenticates with the secret token verbatim,
+// GitHub Enterprise and Bitbucket Data Center sign the body with HMAC-SHA256 (on
+// different headers), and Azure DevOps uses HTTP Basic.
 const (
 	headerGitLabToken    = "X-Gitlab-Token" //nolint:gosec // header name, not a credential
 	headerGitLabEvent    = "X-Gitlab-Event"
 	headerGitLabDelivery = "X-Gitlab-Event-UUID"
-	headerHubSignature   = "X-Hub-Signature-256"
-	headerGitHubEvent    = "X-GitHub-Event"
+	headerHubSignature256 = "X-Hub-Signature-256"
+	// headerHubSignature is Bitbucket Data Center's signature header. It carries
+	// the same "sha256=<hex>" body HMAC as GitHub's -256 variant.
+	headerHubSignature = "X-Hub-Signature"
+	headerGitHubEvent  = "X-GitHub-Event"
 	headerGitHubDelivery = "X-GitHub-Delivery"
 	headerBitbucketEvent = "X-Event-Key"
 	// headerRequestID is the delivery identity for the two vendors that ship no
@@ -145,14 +149,26 @@ func (l *Listener) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// verify authenticates one delivery against the configured secret.
+// verify authenticates one delivery against the configured secret. Each vendor
+// is checked only in the shape it actually sends, so a signed vendor cannot be
+// downgraded to the weaker verbatim-token comparison by omitting its signature.
 func (l *Listener) verify(header http.Header, body []byte) bool {
-	if signature := header.Get(headerHubSignature); signature != "" {
-		return verifyHMAC(l.secret, signature, body)
+	switch l.vendor {
+	case config.VendorGitHub:
+		return verifyHMAC(l.secret, header.Get(headerHubSignature256), body)
+	case config.VendorBitbucket:
+		return verifyHMAC(l.secret, header.Get(headerHubSignature), body)
+	case config.VendorAzureDevOps:
+		// Service hooks carry no signature; a subscription authenticates with
+		// HTTP Basic, so the password is the shared secret.
+		_, password, ok := (&http.Request{Header: header}).BasicAuth()
+		return ok && hmac.Equal([]byte(password), l.secret)
+	case config.VendorGitLab:
+		// GitLab sends the secret verbatim; compare in constant time all the same.
+		token := header.Get(headerGitLabToken)
+		return token != "" && hmac.Equal([]byte(token), l.secret)
 	}
-	// GitLab sends the secret verbatim; compare in constant time all the same.
-	token := header.Get(headerGitLabToken)
-	return token != "" && hmac.Equal([]byte(token), l.secret)
+	return false
 }
 
 // verifyHMAC checks a "sha256=<hex>" body signature.

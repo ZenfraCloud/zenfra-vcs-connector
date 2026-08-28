@@ -87,6 +87,36 @@ func TestBlocklistModeDeniesTheDenyTable(t *testing.T) {
 	}
 }
 
+// The deny table is compared against the raw path, but the upstream decodes it
+// before routing — so a percent-encoded deny segment must be caught too, or
+// %61dmin reaches /admin. An encoded project path (eng%2Fplatform) decodes to
+// several components, which are not path positions of their own and must stay
+// allowed even when one of them is a deny-table word.
+func TestBlocklistModeDeniesEncodedDenySegments(t *testing.T) {
+	e := blocklistEngine(t)
+	for _, path := range []string{
+		"/api/v4/%61dmin/ci/variables",
+		"/api/v4/%75sers",
+		"/api/v4/projects/42/%68ooks",
+		"/api/v4/ADMIN/ci/variables",
+	} {
+		dec := e.Evaluate("GET", path, "")
+		if dec.Allowed {
+			t.Errorf("Evaluate(GET %s) was allowed, want denied by the deny table", path)
+			continue
+		}
+		if dec.RuleID != RuleDenied {
+			t.Errorf("Evaluate(GET %s) RuleID = %q, want %q", path, dec.RuleID, RuleDenied)
+		}
+	}
+
+	// An encoded namespace is one path position; "admin" inside it is not.
+	dec := e.Evaluate("GET", "/api/v4/projects/admin%2Fplatform/pipelines", "")
+	if !dec.Allowed {
+		t.Errorf("Evaluate() denied an encoded project path: %s", dec.Reason)
+	}
+}
+
 func TestBlocklistModeDeniesDelete(t *testing.T) {
 	dec := blocklistEngine(t).Evaluate("DELETE", "/api/v4/projects/42/pipelines/7", "")
 	if dec.Allowed {

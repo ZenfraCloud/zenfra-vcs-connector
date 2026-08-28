@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"log/slog"
@@ -140,7 +141,7 @@ func TestHMACSignatureIsVerified(t *testing.T) {
 	mac.Write([]byte(body))
 
 	r := httptest.NewRequest(http.MethodPost, Path, strings.NewReader(body))
-	r.Header.Set(headerHubSignature, hmacSignaturePrefix+hex.EncodeToString(mac.Sum(nil)))
+	r.Header.Set(headerHubSignature256, hmacSignaturePrefix+hex.EncodeToString(mac.Sum(nil)))
 	r.Header.Set(headerGitHubEvent, "push")
 	r.Header.Set(headerGitHubDelivery, "gh-delivery-1")
 	rec := httptest.NewRecorder()
@@ -149,6 +150,82 @@ func TestHMACSignatureIsVerified(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202", rec.Code)
 	}
+}
+
+// Bitbucket Data Center signs on X-Hub-Signature, not GitHub's -256 variant, and
+// Azure DevOps service hooks carry no signature at all — they authenticate with
+// HTTP Basic. Verifying only GitHub's shape would 401 every delivery from both.
+func TestVendorSpecificVerification(t *testing.T) {
+	body := `{"eventKey":"repo:refs_changed"}`
+	mac := hmac.New(sha256.New, []byte(testSecret))
+	mac.Write([]byte(body))
+	signature := hmacSignaturePrefix + hex.EncodeToString(mac.Sum(nil))
+
+	tests := []struct {
+		name     string
+		vendor   config.Vendor
+		headers  map[string]string
+		wantCode int
+	}{
+		{
+			name:   "bitbucket signature is accepted",
+			vendor: config.VendorBitbucket,
+			headers: map[string]string{
+				headerHubSignature:   signature,
+				headerBitbucketEvent: "repo:refs_changed",
+				headerRequestID:      "bb-delivery-1",
+			},
+			wantCode: http.StatusAccepted,
+		},
+		{
+			name:   "bitbucket rejects a bad signature",
+			vendor: config.VendorBitbucket,
+			headers: map[string]string{
+				headerHubSignature:   hmacSignaturePrefix + "00",
+				headerBitbucketEvent: "repo:refs_changed",
+				headerRequestID:      "bb-delivery-2",
+			},
+			wantCode: http.StatusUnauthorized,
+		},
+		{
+			name:     "azure devops basic auth is accepted",
+			vendor:   config.VendorAzureDevOps,
+			headers:  map[string]string{"Authorization": basicAuth("zenfra", testSecret), headerRequestID: "ado-1"},
+			wantCode: http.StatusAccepted,
+		},
+		{
+			name:     "azure devops rejects a wrong password",
+			vendor:   config.VendorAzureDevOps,
+			headers:  map[string]string{"Authorization": basicAuth("zenfra", "nope"), headerRequestID: "ado-2"},
+			wantCode: http.StatusUnauthorized,
+		},
+		{
+			// A signed vendor must not be downgradable to the weaker verbatim
+			// token comparison by omitting its signature.
+			name:     "bitbucket rejects a gitlab-style token",
+			vendor:   config.VendorBitbucket,
+			headers:  map[string]string{headerGitLabToken: testSecret, headerRequestID: "bb-3"},
+			wantCode: http.StatusUnauthorized,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			l := testListener(t, tc.vendor, &stubRelay{ack: &tunnel.EventAck{Accepted: true}})
+			r := httptest.NewRequest(http.MethodPost, Path, strings.NewReader(body))
+			for name, value := range tc.headers {
+				r.Header.Set(name, value)
+			}
+			rec := httptest.NewRecorder()
+			l.Handler().ServeHTTP(rec, r)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantCode)
+			}
+		})
+	}
+}
+
+func basicAuth(user, password string) string {
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+password))
 }
 
 // A signature computed over a different body must not pass: that is the whole
@@ -161,7 +238,7 @@ func TestTamperedBodyFailsHMAC(t *testing.T) {
 	mac.Write([]byte(`{"ref":"refs/heads/main"}`))
 
 	r := httptest.NewRequest(http.MethodPost, Path, strings.NewReader(`{"ref":"refs/heads/evil"}`))
-	r.Header.Set(headerHubSignature, hmacSignaturePrefix+hex.EncodeToString(mac.Sum(nil)))
+	r.Header.Set(headerHubSignature256, hmacSignaturePrefix+hex.EncodeToString(mac.Sum(nil)))
 	r.Header.Set(headerGitHubEvent, "push")
 	r.Header.Set(headerGitHubDelivery, "gh-delivery-1")
 	rec := httptest.NewRecorder()

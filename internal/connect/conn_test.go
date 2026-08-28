@@ -448,6 +448,41 @@ func TestConnHandlerErrorSurfacesTypedError(t *testing.T) {
 	}
 }
 
+// The executor refuses a denied request before reading its body, and the gateway
+// streams the head and its chunks back to back — so the rest of the body lands
+// after the refusal. Those chunks must be dropped, not fault the connection:
+// otherwise every denied POST flaps the tunnel.
+func TestConnLateChunksAfterARefusalKeepTheConnection(t *testing.T) {
+	g := newStubGateway(t, false)
+	refused := make(chan struct{}, 1)
+
+	d := testDialer(func(_ context.Context, _ *Request, w *Responder) {
+		// Deliberately no body read, exactly as a policy denial does.
+		_ = w.Fail(tunnel.ErrCodePolicyDenied, "project not allowlisted", false,
+			tunnel.ErrorOrigin_ERROR_ORIGIN_CONNECTOR)
+		refused <- struct{}{}
+	})
+	dialStub(t, g, d, LaneInteractive)
+	conn := g.next(t)
+
+	send(t, conn, requestEnv("r1", true))
+	if e := recv(t, conn).GetError(); e == nil || e.GetCode() != tunnel.ErrCodePolicyDenied {
+		t.Fatalf("first envelope = %v, want a policy_denied error", e)
+	}
+	<-refused
+
+	// The body the gateway had already queued arrives after the refusal.
+	send(t, conn, chunkEnv(0, []byte("undrained "), false))
+	send(t, conn, chunkEnv(1, []byte("body"), true))
+
+	// The connection is still usable: a second request gets served.
+	send(t, conn, requestEnv("r2", false))
+	head := recv(t, conn)
+	if head.GetRequestId() != "r2" {
+		t.Fatalf("request id = %q, want r2 — the connection did not survive", head.GetRequestId())
+	}
+}
+
 func TestConnCancelCancelsHandlerContext(t *testing.T) {
 	g := newStubGateway(t, false)
 	d := testDialer(func(ctx context.Context, _ *Request, w *Responder) {
