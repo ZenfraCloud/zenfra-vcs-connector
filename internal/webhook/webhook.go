@@ -32,7 +32,7 @@ const relayTimeout = 10 * time.Second
 // GitHub Enterprise and Bitbucket Data Center sign the body with HMAC-SHA256 (on
 // different headers), and Azure DevOps uses HTTP Basic.
 const (
-	headerGitLabToken     = "X-Gitlab-Token" //nolint:gosec // header name, not a credential
+	headerGitLabToken     = "X-Gitlab-Token" // #nosec G101 -- header name, not a credential
 	headerGitLabEvent     = "X-Gitlab-Event"
 	headerGitLabDelivery  = "X-Gitlab-Event-UUID"
 	headerHubSignature256 = "X-Hub-Signature-256"

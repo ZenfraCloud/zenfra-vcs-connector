@@ -159,7 +159,7 @@ func NewDialer(cfg *config.Config, policyHash string, handler Handler, logger *s
 // TLSConfigFromCABundle builds a TLS config trusting only the PEM bundle at path.
 // Corporate deployments terminate the gateway leg on an internal CA.
 func TLSConfigFromCABundle(path string) (*tls.Config, error) {
-	pemBytes, err := os.ReadFile(path) //nolint:gosec // the operator chooses the bundle path
+	pemBytes, err := os.ReadFile(path) // #nosec G304 -- the operator chooses the bundle path
 	if err != nil {
 		return nil, fmt.Errorf("reading CA bundle: %w", err)
 	}
@@ -610,7 +610,7 @@ func (r *Responder) Head(status int, header http.Header, hasBody bool) error {
 	return r.conn.enqueue(&tunnel.Envelope{
 		RequestId: r.requestID,
 		Msg: &tunnel.Envelope_HttpResponseHead{HttpResponseHead: &tunnel.HTTPResponseHead{
-			Status:  int32(status), //nolint:gosec // HTTP status codes fit in int32
+			Status:  int32(status), // #nosec G115 -- net/http status codes are 100..599
 			Headers: headersToProto(header),
 			HasBody: hasBody,
 		}},

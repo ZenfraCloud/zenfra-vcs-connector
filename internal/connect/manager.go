@@ -45,7 +45,7 @@ func Backoff(attempt int, base, maxDelay time.Duration) time.Duration {
 			d = scaled
 		}
 	}
-	return d/2 + time.Duration(rand.Float64()*float64(d/2)) //nolint:gosec // jitter, not crypto
+	return d/2 + time.Duration(rand.Float64()*float64(d/2)) // #nosec G404 -- non-cryptographic reconnect jitter
 }
 
 // Manager keeps this instance's tunnel streams connected.

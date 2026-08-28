@@ -648,7 +648,7 @@ func responseHasBody(method string, status int) bool {
 // `mv`-style rotations swap the file, so a read sees the old or new bytes, never
 // a partial write.
 func readSecret(path string) (string, error) {
-	raw, err := os.ReadFile(path) //nolint:gosec // the operator chooses the secret path
+	raw, err := os.ReadFile(path) // #nosec G304 -- the operator chooses the secret path
 	if err != nil {
 		// The path is safe to name; the contents never are.
 		return "", fmt.Errorf("reading secret file %s: %w", path, err)

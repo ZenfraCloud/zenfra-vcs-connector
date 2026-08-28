@@ -87,24 +87,24 @@ const maxInteractiveConnections = 16
 // Environment variables, each mirroring the flag of the same name.
 const (
 	EnvGatewayURL             = "ZENFRA_VCS_CONNECTOR_GATEWAY_URL"
-	EnvBootstrapToken         = "ZENFRA_VCS_CONNECTOR_BOOTSTRAP_TOKEN" //nolint:gosec // env var name
+	EnvBootstrapToken         = "ZENFRA_VCS_CONNECTOR_BOOTSTRAP_TOKEN" // #nosec G101 -- env var name, not a credential
 	EnvEndpoint               = "ZENFRA_VCS_CONNECTOR_ENDPOINT"
 	EnvCodeloadEndpoint       = "ZENFRA_VCS_CONNECTOR_CODELOAD_ENDPOINT"
 	EnvVendor                 = "ZENFRA_VCS_CONNECTOR_VENDOR"
-	EnvSecretFile             = "ZENFRA_VCS_CONNECTOR_SECRET_FILE" //nolint:gosec // env var name
+	EnvSecretFile             = "ZENFRA_VCS_CONNECTOR_SECRET_FILE" // #nosec G101 -- env var name, not a credential
 	EnvAllowedProjects        = "ZENFRA_VCS_CONNECTOR_ALLOWED_PROJECTS"
 	EnvAllProjects            = "ZENFRA_VCS_CONNECTOR_ALL_PROJECTS"
-	EnvCredentialMode         = "ZENFRA_VCS_CONNECTOR_CREDENTIAL_MODE" //nolint:gosec // env var name
+	EnvCredentialMode         = "ZENFRA_VCS_CONNECTOR_CREDENTIAL_MODE" // #nosec G101 -- env var name, not a credential
 	EnvPolicyMode             = "ZENFRA_VCS_CONNECTOR_POLICY_MODE"
 	EnvInstanceKey            = "ZENFRA_VCS_CONNECTOR_INSTANCE_KEY"
-	EnvEnrollmentKeyFile      = "ZENFRA_VCS_CONNECTOR_ENROLLMENT_KEY_FILE" //nolint:gosec // env var name
+	EnvEnrollmentKeyFile      = "ZENFRA_VCS_CONNECTOR_ENROLLMENT_KEY_FILE" // #nosec G101 -- env var name, not a credential
 	EnvCABundle               = "ZENFRA_VCS_CONNECTOR_CA_BUNDLE"
 	EnvUpstreamCABundle       = "ZENFRA_VCS_CONNECTOR_UPSTREAM_CA_BUNDLE"
 	EnvInteractiveConnections = "ZENFRA_VCS_CONNECTOR_INTERACTIVE_CONNECTIONS"
 	EnvLogLevel               = "ZENFRA_VCS_CONNECTOR_LOG_LEVEL"
 	EnvMetricsAddr            = "ZENFRA_VCS_CONNECTOR_METRICS_ADDR"
 	EnvWebhookAddr            = "ZENFRA_VCS_CONNECTOR_WEBHOOK_ADDR"
-	EnvWebhookSecretFile      = "ZENFRA_VCS_CONNECTOR_WEBHOOK_SECRET_FILE" //nolint:gosec // env var name
+	EnvWebhookSecretFile      = "ZENFRA_VCS_CONNECTOR_WEBHOOK_SECRET_FILE" // #nosec G101 -- env var name, not a credential
 )
 
 // ErrInvalidConfig marks a terminal configuration problem. A connector that gets
