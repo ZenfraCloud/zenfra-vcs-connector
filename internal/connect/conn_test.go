@@ -556,20 +556,9 @@ func TestConnCancelOutsideAnExchange(t *testing.T) {
 
 func TestConnProtocolViolationsEndTheConnection(t *testing.T) {
 	tests := []struct {
-		name string
-		// hold keeps the first request's handler running so the violation is
-		// observed against a genuinely in-flight exchange.
-		hold  bool
+		name  string
 		drive func(t *testing.T, conn *websocket.Conn)
 	}{
-		{
-			name: "second request while one is in flight",
-			hold: true,
-			drive: func(t *testing.T, conn *websocket.Conn) {
-				send(t, conn, requestEnv("r1", false))
-				send(t, conn, requestEnv("r2", false))
-			},
-		},
 		{
 			name: "request id reused after settling",
 			drive: func(t *testing.T, conn *websocket.Conn) {
@@ -627,14 +616,8 @@ func TestConnProtocolViolationsEndTheConnection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := newStubGateway(t, false)
-			release := make(chan struct{})
-			defer close(release)
 			// A body reader that is never drained must not wedge the read pump.
 			d := testDialer(func(_ context.Context, _ *Request, w *Responder) {
-				if tt.hold {
-					<-release
-					return
-				}
 				_ = w.Head(http.StatusOK, nil, false)
 			})
 			_, served := dialStub(t, g, d, LaneInteractive)
@@ -651,6 +634,52 @@ func TestConnProtocolViolationsEndTheConnection(t *testing.T) {
 				t.Fatal("the connection stayed open after a protocol violation")
 			}
 		})
+	}
+}
+
+// The gateway carries one exchange at a time per stream, so a second request can
+// only mean it stopped waiting for the first — an abandoned response body, a body
+// idle timeout, or an unacknowledged cancel. The connection has to survive that:
+// failing it would take down every other request riding the same stream.
+func TestConnSupersedesAnAbandonedRequest(t *testing.T) {
+	g := newStubGateway(t, false)
+	started := make(chan string, 2)
+	cancelled := make(chan string, 1)
+	d := testDialer(func(ctx context.Context, r *Request, w *Responder) {
+		started <- r.ID
+		if r.ID == "r1" {
+			<-ctx.Done()
+			cancelled <- r.ID
+			return
+		}
+		_ = w.Head(http.StatusOK, nil, false)
+	})
+	_, served := dialStub(t, g, d, LaneInteractive)
+	conn := g.next(t)
+
+	send(t, conn, requestEnv("r1", false))
+	if id := <-started; id != "r1" {
+		t.Fatalf("first handler ran for %q, want r1", id)
+	}
+	send(t, conn, requestEnv("r2", false))
+	if id := <-started; id != "r2" {
+		t.Fatalf("second handler ran for %q, want r2", id)
+	}
+
+	// The superseded handler is cancelled rather than left running.
+	select {
+	case <-cancelled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the superseded request was never cancelled")
+	}
+
+	if head := recv(t, conn).GetHttpResponseHead(); head == nil {
+		t.Fatal("the second request never got a response head")
+	}
+	select {
+	case err := <-served:
+		t.Fatalf("Serve() ended with %v, want the connection to survive", err)
+	default:
 	}
 }
 

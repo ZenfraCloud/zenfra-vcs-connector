@@ -53,6 +53,9 @@ const (
 // connection.
 var ErrProtocol = errors.New("tunnel protocol violation")
 
+// errSuperseded fails an exchange the gateway walked away from.
+var errSuperseded = errors.New("connect: exchange superseded by the next request")
+
 // ConnConfig bounds one tunnel connection.
 type ConnConfig struct {
 	// PongWait bounds a single blocking read. The gateway drives keepalive, so a
@@ -358,13 +361,15 @@ func (c *Conn) startExchange(ctx context.Context, env *tunnel.Envelope) error {
 	requestID := env.GetRequestId()
 
 	c.mu.Lock()
-	if c.current != nil {
-		// Read the in-flight ID before unlocking: the handler goroutine nils
-		// c.current the moment it settles, so touching it after would race.
-		inFlight := c.current.requestID
-		c.mu.Unlock()
-		return fmt.Errorf("%w: second request %q while %q is in flight",
-			ErrProtocol, requestID, inFlight)
+	// The gateway carries one exchange at a time per stream, so a second request
+	// can only mean it stopped waiting for the previous one: the caller closed the
+	// response body early, the body idle timeout fired, or a cancel went
+	// unacknowledged. Supersede the stale exchange instead of failing the
+	// connection, which would take every other in-flight request with it.
+	stale := c.current
+	if stale != nil {
+		c.current = nil
+		c.lastID = stale.requestID
 	}
 	if requestID == c.lastID {
 		c.mu.Unlock()
@@ -380,6 +385,13 @@ func (c *Conn) startExchange(ctx context.Context, env *tunnel.Envelope) error {
 	}
 	c.current = ex
 	c.mu.Unlock()
+
+	if stale != nil {
+		c.logger.Warn("superseding an abandoned request",
+			"request_id", stale.requestID, "next_request_id", requestID)
+		stale.cancel()
+		stale.abort(errSuperseded)
+	}
 
 	resp := &Responder{conn: c, requestID: requestID}
 	go func() {
@@ -457,7 +469,11 @@ func (c *Conn) deliverCancel(requestID string) error {
 
 	if ex != nil && ex.requestID == requestID {
 		// The handler owns the ack: only it knows whether the upstream call landed.
+		// Fail the body pipe too — the handler buffers the request body with a
+		// plain read that no context cancels, so without this a cancel arriving
+		// mid-body would wedge the exchange until the connection lifetime expires.
 		ex.cancel()
+		ex.abort(context.Canceled)
 		return nil
 	}
 	outcome := tunnel.CancelOutcome_CANCEL_OUTCOME_NOT_SENT

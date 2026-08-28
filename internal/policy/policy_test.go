@@ -90,31 +90,79 @@ func TestAllowlistCoversTheGitLabSurface(t *testing.T) {
 	}
 }
 
-// TestEveryRuleIsCovered fails when a rule is added without an allow test above,
-// so the compiled table can never grow an unexercised entry.
+// TestEveryRuleIsCovered fails when any vendor's table grows a rule without an
+// allow test in that vendor's surface test, so no compiled table can carry an
+// unexercised entry — the vendors most likely to grow an over-broad pattern are
+// exactly the ones a GitLab-only gate would have missed.
 func TestEveryRuleIsCovered(t *testing.T) {
-	e := engine(t)
-	covered := map[string]bool{}
-	for _, tt := range []string{
-		"gitlab.user.current", "gitlab.projects.list", "gitlab.project.get",
-		"gitlab.repository.tree", "gitlab.branches.list", "gitlab.branch.get",
-		"gitlab.commits.list", "gitlab.commit.get", "gitlab.commit.diff",
-		"gitlab.commit.statuses.list", "gitlab.repository.compare",
-		"gitlab.repository.file.raw", "gitlab.repository.archive",
-		"gitlab.merge_requests.list", "gitlab.merge_request.get",
-		"gitlab.merge_request.changes", "gitlab.merge_request.notes.list",
-		"gitlab.merge_request.notes.create", "gitlab.merge_request.notes.update",
-		"gitlab.commit.status.set",
+	for _, tt := range []struct {
+		vendor config.Vendor
+		test   string
+		rules  []string
+	}{
+		{config.VendorGitLab, "TestAllowlistCoversTheGitLabSurface", []string{
+			"gitlab.user.current", "gitlab.projects.list", "gitlab.project.get",
+			"gitlab.repository.tree", "gitlab.branches.list", "gitlab.branch.get",
+			"gitlab.commits.list", "gitlab.commit.get", "gitlab.commit.diff",
+			"gitlab.commit.statuses.list", "gitlab.repository.compare",
+			"gitlab.repository.file.raw", "gitlab.repository.archive",
+			"gitlab.merge_requests.list", "gitlab.merge_request.get",
+			"gitlab.merge_request.changes", "gitlab.merge_request.notes.list",
+			"gitlab.merge_request.notes.create", "gitlab.merge_request.notes.update",
+			"gitlab.commit.status.set",
+		}},
+		{config.VendorGitHub, "TestAllowlistCoversTheGitHubEnterpriseSurface", []string{
+			"github.user.current", "github.repos.list", "github.repo.get",
+			"github.repo.contents", "github.branches.list", "github.branch.get",
+			"github.commits.list", "github.commit.get", "github.compare",
+			"github.repository.tarball", "github.pull_requests.list",
+			"github.pull_request.get", "github.pull_request.files",
+			"github.pull_request.comments.list", "github.pull_request.comment.create",
+			"github.pull_request.comment.update", "github.check_run.create",
+			"github.check_run.update", "github.commit.status.create",
+			"github.codeload.archive", "github.codeload.archive.host",
+		}},
+		{config.VendorBitbucket, "TestAllowlistCoversTheBitbucketDataCenterSurface", []string{
+			"bitbucket.user.current", "bitbucket.repos.list", "bitbucket.repo.get",
+			"bitbucket.repo.browse", "bitbucket.repo.raw", "bitbucket.branches.list",
+			"bitbucket.branches.default", "bitbucket.commits.list", "bitbucket.commit.get",
+			"bitbucket.commit.diff", "bitbucket.commit.changes",
+			"bitbucket.repository.archive", "bitbucket.pull_requests.list",
+			"bitbucket.pull_request.get", "bitbucket.pull_request.changes",
+			"bitbucket.pull_request.diff", "bitbucket.pull_request.comments.list",
+			"bitbucket.pull_request.comment.create", "bitbucket.pull_request.comment.update",
+			"bitbucket.build_statuses.list", "bitbucket.build_status.set",
+		}},
+		{config.VendorAzureDevOps, "TestAllowlistCoversTheAzureDevOpsSurface", []string{
+			"azure_devops.connection_data", "azure_devops.repos.list",
+			"azure_devops.repo.get", "azure_devops.repository.items",
+			"azure_devops.refs.list", "azure_devops.commits.list",
+			"azure_devops.commit.get", "azure_devops.commit.changes",
+			"azure_devops.commit.statuses.list", "azure_devops.commit.status.set",
+			"azure_devops.pull_requests.list", "azure_devops.pull_request.get",
+			"azure_devops.pull_request.threads.list",
+			"azure_devops.pull_request.thread.create",
+			"azure_devops.pull_request.comment.update",
+		}},
 	} {
-		covered[tt] = true
-	}
-	for _, rule := range e.Rules() {
-		if !covered[rule.ID] {
-			t.Errorf("rule %q (%s) has no allow test in TestAllowlistCoversTheGitLabSurface", rule.ID, rule.Purpose)
-		}
-	}
-	if len(e.Rules()) != len(covered) {
-		t.Errorf("rule count = %d, covered = %d", len(e.Rules()), len(covered))
+		t.Run(string(tt.vendor), func(t *testing.T) {
+			e, err := NewEngine(&config.Config{Vendor: tt.vendor, AllProjects: true})
+			if err != nil {
+				t.Fatalf("NewEngine(%s) error = %v, want nil", tt.vendor, err)
+			}
+			covered := map[string]bool{}
+			for _, id := range tt.rules {
+				covered[id] = true
+			}
+			for _, rule := range e.Rules() {
+				if !covered[rule.ID] {
+					t.Errorf("rule %q (%s) has no allow test in %s", rule.ID, rule.Purpose, tt.test)
+				}
+			}
+			if len(e.Rules()) != len(covered) {
+				t.Errorf("rule count = %d, covered = %d", len(e.Rules()), len(covered))
+			}
+		})
 	}
 }
 

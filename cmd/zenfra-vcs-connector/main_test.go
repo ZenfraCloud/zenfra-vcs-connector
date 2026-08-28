@@ -45,6 +45,21 @@ func TestRunRejectsUnbuildablePolicyScope(t *testing.T) {
 	}
 }
 
+// A secret file the connector cannot read is "fix your flags", not "retry": left
+// unchecked the process would register, open every stream and report healthy
+// while every tunneled request failed on the credential.
+func TestRunRejectsUnreadableSecretFile(t *testing.T) {
+	err := run(context.Background(), []string{
+		"--gateway-url", "http://gw", "--bootstrap-token", "vcsc_x.y",
+		"--endpoint", "https://gitlab.internal", "--vendor", "gitlab",
+		"--all-projects",
+		"--secret-file", filepath.Join(t.TempDir(), "absent"),
+	}, noEnv)
+	if !errors.Is(err, config.ErrInvalidConfig) {
+		t.Fatalf("want ErrInvalidConfig, got %v", err)
+	}
+}
+
 func TestRunRegistersThenStopsOnContextCancel(t *testing.T) {
 	var registrations atomic.Int32
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

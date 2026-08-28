@@ -247,14 +247,17 @@ func TestHandle_InjectsCredentialAfterPolicyApproval(t *testing.T) {
 	}
 }
 
-// A denial must not even need the credential: the secret file does not exist, so
-// a policy_denied result proves nothing tried to read it.
+// A denial must not even need the credential: the secret file is removed after
+// startup validation, so a policy_denied result proves nothing tried to read it.
 func TestHandle_DeniedRequestNeverReadsSecretOrReachesUpstream(t *testing.T) {
 	stub := newStub(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	missing := filepath.Join(t.TempDir(), "absent")
-	exec, _ := newExecutor(t, stub.srv.URL, missing)
+	secretPath := newSecretFile(t, testSecret)
+	exec, _ := newExecutor(t, stub.srv.URL, secretPath)
+	if err := os.Remove(secretPath); err != nil {
+		t.Fatalf("removing secret file: %v", err)
+	}
 
 	w := newFakeResponder()
 	exec.Handle(context.Background(), req(http.MethodDelete, "/api/v4/projects/1", ""), w)
@@ -596,17 +599,30 @@ func TestHandle_SecretFileReloadedOnChange(t *testing.T) {
 	}
 }
 
+// A secret that becomes unusable after startup — a rotation that deleted or
+// blanked the file — must fail the request before it is dispatched. New()
+// refuses an unreadable file outright, so the damage happens post-construction.
 func TestHandle_UnusableSecretFailsWithoutDispatch(t *testing.T) {
-	tests := map[string]func(t *testing.T) string{
-		"missing": func(t *testing.T) string { return filepath.Join(t.TempDir(), "absent") },
-		"empty":   func(t *testing.T) string { return newSecretFile(t, "   ") },
+	tests := map[string]func(t *testing.T, path string){
+		"missing": func(t *testing.T, path string) {
+			if err := os.Remove(path); err != nil {
+				t.Fatalf("removing secret file: %v", err)
+			}
+		},
+		"empty": func(t *testing.T, path string) {
+			if err := os.WriteFile(path, []byte("   \n"), 0o600); err != nil {
+				t.Fatalf("blanking secret file: %v", err)
+			}
+		},
 	}
-	for name, makePath := range tests {
+	for name, breakSecret := range tests {
 		t.Run(name, func(t *testing.T) {
 			stub := newStub(t, func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			})
-			exec, _ := newExecutor(t, stub.srv.URL, makePath(t))
+			secretPath := newSecretFile(t, testSecret)
+			exec, _ := newExecutor(t, stub.srv.URL, secretPath)
+			breakSecret(t, secretPath)
 
 			w := newFakeResponder()
 			exec.Handle(context.Background(), req(http.MethodGet, "/api/v4/user", ""), w)

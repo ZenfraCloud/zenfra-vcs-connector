@@ -128,6 +128,17 @@ func New(cfg *config.Config, engine *policy.Engine, audit *slog.Logger) (*Execut
 		audit = slog.Default()
 	}
 
+	// Fail at startup, not per request, for the same reason as the CA bundle
+	// below: a secret file the connector cannot read would otherwise register,
+	// open every stream and report healthy while every tunneled request failed.
+	// The value is discarded — it is re-read per request so a rotation lands
+	// without a restart.
+	if cfg.CredentialMode == config.CredentialModeAgentLocal {
+		if _, err := readSecret(cfg.SecretFile); err != nil {
+			return nil, fmt.Errorf("executor: %w", err)
+		}
+	}
+
 	// SECURITY: the SSRF-safe dialer from the control plane's GitLab client is
 	// deliberately NOT copied here — it blocks private address space, which is
 	// exactly where the connector's upstream lives. The equivalent guarantee comes
