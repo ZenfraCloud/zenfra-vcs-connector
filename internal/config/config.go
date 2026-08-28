@@ -104,6 +104,10 @@ const (
 // one must exit rather than retry: no amount of waiting fixes a bad flag.
 var ErrInvalidConfig = errors.New("invalid configuration")
 
+// ErrHelpRequested reports that -h/--help was asked for and the usage has already
+// been printed. Not a failure: the caller exits 0.
+var ErrHelpRequested = errors.New("help requested")
+
 // Config is the validated connector configuration.
 type Config struct {
 	// GatewayURL is the zenfra-api base URL (http/https; the tunnel dial derives ws/wss).
@@ -211,8 +215,10 @@ func Load(args []string, getenv func(string) string) (*Config, error) {
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&cfg.GatewayURL, "gateway-url", getenv(EnvGatewayURL),
 		"zenfra-api base URL, e.g. https://api.zenfra.cloud")
-	fs.StringVar(&cfg.BootstrapToken, "bootstrap-token", getenv(EnvBootstrapToken),
-		"connector bootstrap token (vcsc_...)")
+	// Registered with an empty default so -h can print the usage without echoing
+	// the fleet-wide bootstrap token; the env fallback is applied after Parse.
+	fs.StringVar(&cfg.BootstrapToken, "bootstrap-token", "",
+		"connector bootstrap token (vcsc_..., or set "+EnvBootstrapToken+")")
 	fs.StringVar(&cfg.Endpoint, "endpoint", getenv(EnvEndpoint),
 		"upstream VCS base URL, e.g. https://gitlab.internal "+
 			"(Azure DevOps: include the collection, e.g. https://tfs.internal/DefaultCollection)")
@@ -255,7 +261,16 @@ func Load(args []string, getenv func(string) string) (*Config, error) {
 		"path to the file holding the webhook shared secret (required with --webhook-addr)")
 
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fs.SetOutput(os.Stdout)
+			fmt.Fprintln(os.Stdout, "Usage of zenfra-vcs-connector:") //nolint:errcheck // stdout
+			fs.PrintDefaults()
+			return nil, ErrHelpRequested
+		}
 		return nil, fmt.Errorf("%w: %w", ErrInvalidConfig, err)
+	}
+	if cfg.BootstrapToken == "" {
+		cfg.BootstrapToken = getenv(EnvBootstrapToken)
 	}
 	cfg.AllowedProjects = splitList(allowedProjects)
 

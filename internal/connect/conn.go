@@ -381,12 +381,24 @@ func (c *Conn) startExchange(ctx context.Context, env *tunnel.Envelope) error {
 	c.current = ex
 	c.mu.Unlock()
 
+	resp := &Responder{conn: c, requestID: requestID}
 	go func() {
 		defer cancel()
 		defer c.settle(ex)
-		c.handler(exCtx, &Request{ID: requestID, Head: head, Body: body}, &Responder{
-			conn: c, requestID: requestID,
-		})
+		// A handler panic would otherwise kill the process with status 2 — the
+		// code that tells an orchestrator "misconfigured, do not restart" — and
+		// take every other lane's stream with it. One request fails instead.
+		defer func() {
+			if r := recover(); r != nil {
+				c.logger.Error("panic handling tunneled request",
+					"request_id", requestID, "panic", fmt.Sprint(r))
+				// ErrCodeProtocol is the gateway's catch-all: an unknown code is
+				// normalized to it anyway, so a new one would buy nothing.
+				_ = resp.Fail(tunnel.ErrCodeProtocol, "connector failed to handle the request",
+					false, tunnel.ErrorOrigin_ERROR_ORIGIN_CONNECTOR)
+			}
+		}()
+		c.handler(exCtx, &Request{ID: requestID, Head: head, Body: body}, resp)
 	}()
 	return nil
 }

@@ -856,3 +856,27 @@ func TestHandle_UpstreamCABundle(t *testing.T) {
 		}
 	})
 }
+
+// SECURITY: the allowlist's promise is that the string it matched is the string
+// that reaches the VCS. A byte Go escapes in paths (here a space) makes url.Parse
+// drop the raw form, so EscapedPath re-derives it from the decoded path and the
+// approved %2F becomes a real separator — a different project. The request must
+// fail rather than be sent under a path the policy never saw.
+func TestHandle_PathThatWouldBeReEscapedIsRefused(t *testing.T) {
+	upstream := newStub(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	exec, _ := newExecutor(t, upstream.srv.URL, newSecretFile(t, "glpat-secret"))
+
+	w := newFakeResponder()
+	exec.Handle(context.Background(),
+		req(http.MethodGet, "/api/v4/projects/eng%2Fplatform/repository/branches/a b", ""), w)
+
+	if got := w.snapshot(); got.failure == nil {
+		t.Fatalf("status = %d, want the request refused", got.status)
+	}
+	if n := upstream.count(); n != 0 {
+		followed, _ := upstream.last()
+		t.Fatalf("upstream received %d requests (path %q), want none", n, followed.URL.EscapedPath())
+	}
+}

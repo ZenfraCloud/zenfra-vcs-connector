@@ -140,6 +140,20 @@ func (e *Engine) PolicyHash() string { return e.hash }
 // Evaluate decides one request. It canonicalizes first and matches the canonical
 // form, so what was authorized is exactly what the executor sends upstream.
 func (e *Engine) Evaluate(method, rawPath, rawQuery string) Decision {
+	return e.evaluate(method, rawPath, rawQuery, CanonicalizeQuery)
+}
+
+// EvaluateRedirect is Evaluate for a Location the upstream returned. Only the
+// query rules differ; see CanonicalizeRedirectQuery. The caller must still pin
+// the resulting origin to the rule's RedirectsTo.
+func (e *Engine) EvaluateRedirect(method, rawPath, rawQuery string) Decision {
+	return e.evaluate(method, rawPath, rawQuery, CanonicalizeRedirectQuery)
+}
+
+func (e *Engine) evaluate(
+	method, rawPath, rawQuery string,
+	canonicalizeQuery func(string) (string, error),
+) Decision {
 	dec := Decision{Method: strings.ToUpper(strings.TrimSpace(method))}
 
 	path, err := CanonicalizePath(rawPath)
@@ -147,7 +161,7 @@ func (e *Engine) Evaluate(method, rawPath, rawQuery string) Decision {
 		dec.Reason = err.Error()
 		return dec
 	}
-	query, err := CanonicalizeQuery(rawQuery)
+	query, err := canonicalizeQuery(rawQuery)
 	if err != nil {
 		dec.Reason = err.Error()
 		return dec

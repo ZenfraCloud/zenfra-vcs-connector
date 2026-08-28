@@ -43,6 +43,10 @@ done
 VERSION="${VERSION#v}"
 
 MODULE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# The release builds with exactly the toolchain go.mod names; pin it here so a
+# verifier's own Go version cannot change the digest.
+BUILD_TOOLCHAIN="${BUILD_TOOLCHAIN:-go$(awk '/^go /{print $2; exit}' "$MODULE_DIR/go.mod")}"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
@@ -56,7 +60,10 @@ build_at() {
     tar -C "$MODULE_DIR" --exclude=./dist --exclude=./.git -cf - . | tar -C "$src" -xf -
     (
         cd "$src"
+        # The go directive in go.mod is a floor, not a pin: without GOTOOLCHAIN a
+        # customer on a newer Go builds different bytes and reads it as tampering.
         GOWORK=off CGO_ENABLED=0 GOOS="$BUILD_GOOS" GOARCH="$BUILD_GOARCH" \
+            GOTOOLCHAIN="$BUILD_TOOLCHAIN" \
             go build -trimpath -buildvcs=false \
             -ldflags "-s -w -X main.version=${VERSION}" \
             -o "$WORK_DIR/$name.bin" ./cmd/zenfra-vcs-connector
@@ -84,7 +91,7 @@ if [ "$FIRST" != "$SECOND" ]; then
 fi
 
 if [ -n "$EXPECTED" ] && [ "$FIRST" != "$EXPECTED" ]; then
-    echo "DIGEST MISMATCH: built $FIRST, expected $EXPECTED" >&2
+    echo "DIGEST MISMATCH: built $FIRST, expected $EXPECTED (toolchain $BUILD_TOOLCHAIN)" >&2
     exit 1
 fi
 

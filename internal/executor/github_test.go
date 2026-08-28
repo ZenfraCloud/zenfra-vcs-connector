@@ -92,13 +92,16 @@ func TestHandle_GitHubInjectsBearerCredential(t *testing.T) {
 	}
 }
 
+// archiveBytes is the body every codeload stub serves.
+const archiveBytes = "archive-bytes"
+
 // The archive redirect is followed onto the operator's pinned codeload origin.
 // The Location header names a host the connector has never heard of; only its
 // path is used, and the credential does not travel to the second origin.
 func TestHandle_ArchiveRedirectGoesToThePinnedCodeloadOrigin(t *testing.T) {
 	codeload := newStub(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/gzip")
-		_, _ = w.Write([]byte("archive-bytes"))
+		_, _ = w.Write([]byte(archiveBytes))
 	})
 	api := newStub(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Location", "https://attacker.invalid/_codeload/eng/platform/legacy.tar.gz/abc123")
@@ -118,7 +121,7 @@ func TestHandle_ArchiveRedirectGoesToThePinnedCodeloadOrigin(t *testing.T) {
 	if got.status != http.StatusOK {
 		t.Errorf("status = %d, want 200 from the codeload origin", got.status)
 	}
-	if body := w.bodyString(); body != "archive-bytes" {
+	if body := w.bodyString(); body != archiveBytes {
 		t.Errorf("body = %q, want the archive bytes", body)
 	}
 	if codeload.count() != 1 {
@@ -146,7 +149,7 @@ func TestHandle_ArchiveRedirectGoesToThePinnedCodeloadOrigin(t *testing.T) {
 func TestHandle_ArchiveRedirectDefaultsToTheEndpoint(t *testing.T) {
 	api := newStub(t, func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/_codeload/") {
-			_, _ = w.Write([]byte("archive-bytes"))
+			_, _ = w.Write([]byte(archiveBytes))
 			return
 		}
 		w.Header().Set("Location", "/_codeload/eng/platform/legacy.tar.gz/abc123")
@@ -167,7 +170,7 @@ func TestHandle_ArchiveRedirectDefaultsToTheEndpoint(t *testing.T) {
 	if want := "/_codeload/eng/platform/legacy.tar.gz/abc123"; followed.URL.Path != want {
 		t.Errorf("followed path = %q, want %q", followed.URL.Path, want)
 	}
-	if body := w.bodyString(); body != "archive-bytes" {
+	if body := w.bodyString(); body != archiveBytes {
 		t.Errorf("body = %q, want the archive bytes", body)
 	}
 }
@@ -318,5 +321,43 @@ func TestHandle_CodeloadOriginUnreachableReportsUpstream(t *testing.T) {
 	}
 	if got.headSent {
 		t.Error("a response head was sent for a failed follow")
+	}
+}
+
+// GitHub signs the codeload redirect for a private repository as
+// ?token=<signed>. That is the upstream's own credential, minted for a leg the
+// connector never credentials itself, so the query must survive re-evaluation —
+// rejecting it would break archive downloads for exactly the repositories a
+// firewalled Enterprise Server holds.
+func TestHandle_ArchiveRedirectCarriesTheUpstreamSignedToken(t *testing.T) {
+	codeload := newStub(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(archiveBytes))
+	})
+	api := newStub(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location",
+			codeload.srv.URL+"/_codeload/eng/platform/legacy.tar.gz/abc123?token=SIGNED")
+		w.WriteHeader(http.StatusFound)
+	})
+	exec, _ := newGitHubExecutor(t, api.srv.URL, codeload.srv.URL, newSecretFile(t, gheSecret))
+
+	r := req(http.MethodGet, "/api/v3/repos/eng/platform/tarball/abc123", "")
+	r.Head.DeadlineClass = tunnel.DeadlineClass_DEADLINE_CLASS_BULK
+	w := newFakeResponder()
+	exec.Handle(context.Background(), r, w)
+
+	got := w.snapshot()
+	if got.failure != nil {
+		t.Fatalf("Fail(%q: %s) — want the archive", got.failure.GetCode(), got.failure.GetMessage())
+	}
+	if body := w.bodyString(); body != archiveBytes {
+		t.Errorf("body = %q, want the archive bytes", body)
+	}
+	followed, _ := codeload.last()
+	if q := followed.URL.RawQuery; q != "token=SIGNED" {
+		t.Errorf("codeload query = %q, want the signed token to cross", q)
+	}
+	// The connector's own credential still stays on the primary leg.
+	if auth := followed.Header.Get("Authorization"); auth != "" {
+		t.Errorf("Authorization = %q on the codeload leg, want none", auth)
 	}
 }

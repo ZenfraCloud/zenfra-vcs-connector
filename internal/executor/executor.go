@@ -330,6 +330,26 @@ func (e *Executor) buildRequest(
 	if err != nil {
 		return nil, fmt.Errorf("building upstream request: %w", err)
 	}
+	// The allowlist's guarantee is that the string it matched is the string that
+	// reaches the VCS. url.Parse keeps the raw form only when it is a valid path
+	// encoding; for anything else EscapedPath re-derives it from the decoded path,
+	// which would turn an approved %2F into a real separator. Fail closed rather
+	// than send a path the policy never saw. The origin may carry a base path of
+	// its own (an Azure DevOps collection), so the approved path is a suffix.
+	base, err := url.Parse(origin)
+	if err != nil {
+		return nil, fmt.Errorf("origin %q is not a URL: %w", dec.Origin, err)
+	}
+	if want := base.EscapedPath() + dec.Path; req.URL.EscapedPath() != want {
+		return nil, fmt.Errorf(
+			"upstream URL does not preserve the approved path (%q became %q)",
+			want, req.URL.EscapedPath())
+	}
+	if req.URL.RawQuery != dec.Query {
+		return nil, fmt.Errorf(
+			"upstream URL does not preserve the approved query (%q became %q)",
+			dec.Query, req.URL.RawQuery)
+	}
 	if body != nil {
 		req.ContentLength = int64(len(body))
 	}
@@ -417,7 +437,7 @@ func (e *Executor) followPinnedRedirect(
 		return nil
 	}
 
-	next := e.engine.Evaluate(http.MethodGet, target.EscapedPath(), target.RawQuery)
+	next := e.engine.EvaluateRedirect(http.MethodGet, target.EscapedPath(), target.RawQuery)
 	if !next.Allowed || next.Origin != dec.RedirectsTo {
 		rec.Reason = redirectDenialReason(&next, dec.RedirectsTo)
 		e.fail(w, rec, tunnel.ErrCodePolicyDenied, rec.Reason, false, tunnel.ErrorOrigin_ERROR_ORIGIN_CONNECTOR)

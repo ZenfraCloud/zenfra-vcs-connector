@@ -44,6 +44,9 @@ func serve() int {
 	defer stop()
 
 	if err := run(ctx, os.Args[1:], os.Getenv); err != nil {
+		if errors.Is(err, config.ErrHelpRequested) {
+			return 0
+		}
 		fmt.Fprintf(os.Stderr, "zenfra-vcs-connector: %v\n", err)
 		if errors.Is(err, config.ErrInvalidConfig) {
 			return exitMisconfigured
@@ -76,7 +79,9 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 	// keeps. It is structurally incapable of holding credentials (see audit.go).
 	exec, err := executor.New(cfg, engine, logger.With("component", "audit"))
 	if err != nil {
-		return fmt.Errorf("building executor: %w", err)
+		// An unreadable --secret-file is "fix your flags", not "try again": without
+		// ErrInvalidConfig the process exits 1 and a supervisor restart-loops it.
+		return fmt.Errorf("%w: building executor: %w", config.ErrInvalidConfig, err)
 	}
 
 	collector := metrics.New(time.Now())
@@ -89,7 +94,9 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 
 	dialer, err := connect.NewDialer(cfg, engine.PolicyHash(), exec.Handler(), logger)
 	if err != nil {
-		return fmt.Errorf("building tunnel dialer: %w", err)
+		// Same reasoning as the executor: the only way this fails is a --ca-bundle
+		// that cannot be read or parsed.
+		return fmt.Errorf("%w: building tunnel dialer: %w", config.ErrInvalidConfig, err)
 	}
 
 	// The dialer already resolved --ca-bundle; the register and refresh legs

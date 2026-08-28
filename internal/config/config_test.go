@@ -13,11 +13,14 @@ func env(pairs map[string]string) func(string) string {
 	return func(key string) string { return pairs[key] }
 }
 
+// testBootstrapToken is the bootstrap token every fixture command line carries.
+const testBootstrapToken = "vcsc_abc.def"
+
 // validArgs is a complete, minimal command line.
 func validArgs() []string {
 	return []string{
 		"--gateway-url", "https://api.zenfra.cloud",
-		"--bootstrap-token", "vcsc_abc.def",
+		"--bootstrap-token", testBootstrapToken,
 		"--endpoint", "https://gitlab.internal",
 		"--vendor", "gitlab",
 		"--secret-file", "/etc/zenfra/gitlab-token",
@@ -33,7 +36,7 @@ func TestLoadValidConfig(t *testing.T) {
 	if cfg.GatewayURL != "https://api.zenfra.cloud" {
 		t.Errorf("GatewayURL = %q", cfg.GatewayURL)
 	}
-	if cfg.BootstrapToken != "vcsc_abc.def" {
+	if cfg.BootstrapToken != testBootstrapToken {
 		t.Errorf("BootstrapToken = %q", cfg.BootstrapToken)
 	}
 	if cfg.Endpoint != "https://gitlab.internal" {
@@ -134,7 +137,7 @@ func TestLoadFlagsOverrideEnvironment(t *testing.T) {
 func TestLoadAllProjects(t *testing.T) {
 	args := []string{
 		"--gateway-url", "https://api.zenfra.cloud",
-		"--bootstrap-token", "vcsc_abc.def",
+		"--bootstrap-token", testBootstrapToken,
 		"--endpoint", "https://gitlab.internal",
 		"--vendor", "gitlab",
 		"--secret-file", "/etc/zenfra/gitlab-token",
@@ -175,7 +178,7 @@ func TestLoadMisconfigIsFatalWithClearMessage(t *testing.T) {
 		{
 			name: "missing gateway url",
 			args: []string{
-				"--bootstrap-token", "vcsc_abc.def",
+				"--bootstrap-token", testBootstrapToken,
 				"--endpoint", "https://gitlab.internal",
 				"--vendor", "gitlab",
 				"--secret-file", "/etc/zenfra/gitlab-token",
@@ -187,7 +190,7 @@ func TestLoadMisconfigIsFatalWithClearMessage(t *testing.T) {
 			name: "missing endpoint",
 			args: []string{
 				"--gateway-url", "https://api.zenfra.cloud",
-				"--bootstrap-token", "vcsc_abc.def",
+				"--bootstrap-token", testBootstrapToken,
 				"--vendor", "gitlab",
 				"--secret-file", "/etc/zenfra/gitlab-token",
 				"--all-projects",
@@ -198,7 +201,7 @@ func TestLoadMisconfigIsFatalWithClearMessage(t *testing.T) {
 			name: "missing vendor",
 			args: []string{
 				"--gateway-url", "https://api.zenfra.cloud",
-				"--bootstrap-token", "vcsc_abc.def",
+				"--bootstrap-token", testBootstrapToken,
 				"--endpoint", "https://gitlab.internal",
 				"--secret-file", "/etc/zenfra/gitlab-token",
 				"--all-projects",
@@ -209,7 +212,7 @@ func TestLoadMisconfigIsFatalWithClearMessage(t *testing.T) {
 			name: "unsupported vendor",
 			args: []string{
 				"--gateway-url", "https://api.zenfra.cloud",
-				"--bootstrap-token", "vcsc_abc.def",
+				"--bootstrap-token", testBootstrapToken,
 				"--endpoint", "https://gitlab.internal",
 				"--vendor", "perforce",
 				"--secret-file", "/etc/zenfra/gitlab-token",
@@ -224,7 +227,7 @@ func TestLoadMisconfigIsFatalWithClearMessage(t *testing.T) {
 			name: "missing secret file",
 			args: []string{
 				"--gateway-url", "https://api.zenfra.cloud",
-				"--bootstrap-token", "vcsc_abc.def",
+				"--bootstrap-token", testBootstrapToken,
 				"--endpoint", "https://gitlab.internal",
 				"--vendor", "gitlab",
 				"--all-projects",
@@ -235,7 +238,7 @@ func TestLoadMisconfigIsFatalWithClearMessage(t *testing.T) {
 			name: "project scope unset",
 			args: []string{
 				"--gateway-url", "https://api.zenfra.cloud",
-				"--bootstrap-token", "vcsc_abc.def",
+				"--bootstrap-token", testBootstrapToken,
 				"--endpoint", "https://gitlab.internal",
 				"--vendor", "gitlab",
 				"--secret-file", "/etc/zenfra/gitlab-token",
@@ -251,7 +254,7 @@ func TestLoadMisconfigIsFatalWithClearMessage(t *testing.T) {
 			name: "gateway url not http",
 			args: []string{
 				"--gateway-url", "wss://api.zenfra.cloud",
-				"--bootstrap-token", "vcsc_abc.def",
+				"--bootstrap-token", testBootstrapToken,
 				"--endpoint", "https://gitlab.internal",
 				"--vendor", "gitlab",
 				"--secret-file", "/etc/zenfra/gitlab-token",
@@ -263,7 +266,7 @@ func TestLoadMisconfigIsFatalWithClearMessage(t *testing.T) {
 			name: "endpoint without host",
 			args: []string{
 				"--gateway-url", "https://api.zenfra.cloud",
-				"--bootstrap-token", "vcsc_abc.def",
+				"--bootstrap-token", testBootstrapToken,
 				"--endpoint", "https:///api",
 				"--vendor", "gitlab",
 				"--secret-file", "/etc/zenfra/gitlab-token",
@@ -275,7 +278,7 @@ func TestLoadMisconfigIsFatalWithClearMessage(t *testing.T) {
 			name: "endpoint with userinfo",
 			args: []string{
 				"--gateway-url", "https://api.zenfra.cloud",
-				"--bootstrap-token", "vcsc_abc.def",
+				"--bootstrap-token", testBootstrapToken,
 				"--endpoint", "https://user:pass@gitlab.internal",
 				"--vendor", "gitlab",
 				"--secret-file", "/etc/zenfra/gitlab-token",
@@ -287,7 +290,7 @@ func TestLoadMisconfigIsFatalWithClearMessage(t *testing.T) {
 			name: "endpoint with query",
 			args: []string{
 				"--gateway-url", "https://api.zenfra.cloud",
-				"--bootstrap-token", "vcsc_abc.def",
+				"--bootstrap-token", testBootstrapToken,
 				"--endpoint", "https://gitlab.internal/?a=b",
 				"--vendor", "gitlab",
 				"--secret-file", "/etc/zenfra/gitlab-token",
@@ -375,7 +378,7 @@ func equalStrings(a, b []string) bool {
 func githubArgs(extra ...string) []string {
 	return append([]string{
 		"--gateway-url", "https://api.zenfra.cloud",
-		"--bootstrap-token", "vcsc_abc.def",
+		"--bootstrap-token", testBootstrapToken,
 		"--endpoint", "https://ghe.internal",
 		"--vendor", "github",
 		"--secret-file", "/etc/zenfra/ghe-token",
@@ -701,7 +704,7 @@ func TestLoadDefaultsToAgentLocalCredentialMode(t *testing.T) {
 func TestLoadControlPlaneCredentialModeNeedsNoSecretFile(t *testing.T) {
 	cfg, err := Load([]string{
 		"--gateway-url", "https://api.zenfra.cloud",
-		"--bootstrap-token", "vcsc_abc.def",
+		"--bootstrap-token", testBootstrapToken,
 		"--endpoint", "https://gitlab.internal",
 		"--vendor", "gitlab",
 		"--allowed-projects", "eng/platform",
@@ -738,7 +741,7 @@ func TestLoadRejectsUnknownCredentialMode(t *testing.T) {
 func TestLoadCredentialModeFromEnv(t *testing.T) {
 	cfg, err := Load([]string{
 		"--gateway-url", "https://api.zenfra.cloud",
-		"--bootstrap-token", "vcsc_abc.def",
+		"--bootstrap-token", testBootstrapToken,
 		"--endpoint", "https://gitlab.internal",
 		"--vendor", "gitlab",
 		"--allowed-projects", "eng/platform",
@@ -754,7 +757,7 @@ func TestLoadCredentialModeFromEnv(t *testing.T) {
 func TestLoadAgentLocalStillRequiresSecretFile(t *testing.T) {
 	_, err := Load([]string{
 		"--gateway-url", "https://api.zenfra.cloud",
-		"--bootstrap-token", "vcsc_abc.def",
+		"--bootstrap-token", testBootstrapToken,
 		"--endpoint", "https://gitlab.internal",
 		"--vendor", "gitlab",
 		"--allowed-projects", "eng/platform",
@@ -780,7 +783,7 @@ func TestLoadBlocklistPolicyModeRequiresAllProjects(t *testing.T) {
 func TestLoadBlocklistPolicyMode(t *testing.T) {
 	cfg, err := Load([]string{
 		"--gateway-url", "https://api.zenfra.cloud",
-		"--bootstrap-token", "vcsc_abc.def",
+		"--bootstrap-token", testBootstrapToken,
 		"--endpoint", "https://gitlab.internal",
 		"--vendor", "gitlab",
 		"--secret-file", "/etc/zenfra/gitlab-token",
@@ -802,5 +805,47 @@ func TestLoadRejectsUnknownPolicyMode(t *testing.T) {
 	_, err := Load(append(validArgs(), "--policy-mode", "yolo"), env(nil))
 	if !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("Load() error = %v, want ErrInvalidConfig", err)
+	}
+}
+
+// README tells customers to run --help; it must print the flags and exit 0
+// rather than surface as a misconfiguration. It must also not echo the
+// fleet-wide bootstrap token from the environment into the usage defaults.
+func TestLoadHelpIsNotAMisconfiguration(t *testing.T) {
+	getenv := func(key string) string {
+		if key == EnvBootstrapToken {
+			return "vcsc_leak.secret"
+		}
+		return ""
+	}
+	_, err := Load([]string{"--help"}, getenv)
+	if !errors.Is(err, ErrHelpRequested) {
+		t.Fatalf("Load(--help) error = %v, want ErrHelpRequested", err)
+	}
+	if errors.Is(err, ErrInvalidConfig) {
+		t.Error("help is reported as a misconfiguration, which exits 2")
+	}
+}
+
+// The env fallback still applies when the flag is absent.
+func TestLoadBootstrapTokenFallsBackToTheEnvironment(t *testing.T) {
+	args := []string{
+		"--gateway-url", "https://api.zenfra.cloud",
+		"--endpoint", "https://gitlab.internal",
+		"--vendor", "gitlab",
+		"--secret-file", "/etc/zenfra/gitlab-token",
+		"--all-projects",
+	}
+	cfg, err := Load(args, func(key string) string {
+		if key == EnvBootstrapToken {
+			return testBootstrapToken
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.BootstrapToken != testBootstrapToken {
+		t.Errorf("BootstrapToken = %q, want the environment value", cfg.BootstrapToken)
 	}
 }

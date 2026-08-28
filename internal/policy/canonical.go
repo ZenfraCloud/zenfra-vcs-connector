@@ -94,6 +94,20 @@ func validateSegment(segment string) error {
 // decoded or normalized: it never selects a rule, and a value may legitimately
 // carry an encoded percent (search=50%25).
 func CanonicalizeQuery(raw string) (string, error) {
+	return canonicalizeQuery(raw, false)
+}
+
+// CanonicalizeRedirectQuery validates the query of a Location the upstream itself
+// minted. It differs from CanonicalizeQuery in one way: credential-shaped keys
+// are allowed, because GitHub signs codeload archive URLs as ?token=<signed>.
+// The connector never injects its own credential on a redirect leg, so a query
+// credential here can only be the upstream's own — not one the control plane
+// smuggled in, which is what authQueryKeys exists to stop.
+func CanonicalizeRedirectQuery(raw string) (string, error) {
+	return canonicalizeQuery(raw, true)
+}
+
+func canonicalizeQuery(raw string, upstreamMinted bool) (string, error) {
 	if raw == "" {
 		return "", nil
 	}
@@ -117,7 +131,7 @@ func CanonicalizeQuery(raw string) (string, error) {
 	// credential headers guard against: the control plane must never be able to
 	// ride this connector's upstream session.
 	for key := range values {
-		if authQueryKeys[strings.ToLower(key)] {
+		if !upstreamMinted && authQueryKeys[strings.ToLower(key)] {
 			return "", fmt.Errorf("query must not carry a credential (%s)", key)
 		}
 	}
