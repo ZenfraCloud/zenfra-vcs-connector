@@ -1,0 +1,133 @@
+# ABOUTME: Tagged release pipeline for the customer-run VCS Connector.
+# ABOUTME: Builds reproducible static binaries + multi-arch image, signs both with cosign.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (vX.Y.Z), dry run — nothing is published'
+        required: true
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  release:
+    name: Build and Publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the GitHub release
+      packages: write   # push to GHCR
+      id-token: write   # cosign keyless signing
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        env:
+          # Through the environment, not string interpolation: the dispatch input
+          # is attacker-controlled and this job can push to GHCR and sign.
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            VERSION="$GITHUB_REF_NAME"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+          case "$VERSION" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "version '$VERSION' is not vX.Y.Z" >&2; exit 1 ;;
+          esac
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Install goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          install-only: true
+
+      # The packaging tests are the gate: they prove the binary is reproducible,
+      # that the script reproduces exactly what goreleaser publishes, and that
+      # the chart lints and wires the credential, proxy and CA bundle. Running
+      # them here means a broken release fails before anything is published.
+      - name: Verify packaging
+        run: go test -count=1 ./scripts/...
+
+      - name: Log in to Container Registry
+        if: steps.version.outputs.publish == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v4
+
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: >-
+            release --clean
+            ${{ steps.version.outputs.publish != 'true' && '--snapshot' || '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Keyless signing: the signature is bound to this workflow's OIDC identity,
+      # so there is no signing key to leak or rotate. Verify with:
+      #   cosign verify-blob \
+      #     --certificate-identity-regexp 'https://github.com/ZenfraCloud/zenfra-vcs-connector/.*' \
+      #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      #     --bundle SHA256SUMS.cosign.bundle SHA256SUMS
+      - name: Sign checksums and image
+        if: steps.version.outputs.publish == 'true'
+        env:
+          COSIGN_YES: "true"
+          REPO: ${{ env.REGISTRY }}/zenfracloud/zenfra-vcs-connector
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cosign sign-blob dist/SHA256SUMS --bundle dist/SHA256SUMS.cosign.bundle
+          # goreleaser strips the leading "v" from the tag, so the pushed image
+          # tag is 1.2.3 — signing "v1.2.3" would sign a tag that never existed.
+          cosign sign "$REPO:${VERSION#v}"
+
+      # goreleaser publishes the release itself now that the tag is a plain
+      # vX.Y.Z; the cosign bundle is produced after that and uploaded here.
+      - name: Attach cosign bundle to the release
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: gh release upload "$VERSION" dist/SHA256SUMS.cosign.bundle --clobber
+
+      - name: Upload dry-run artifacts
+        if: steps.version.outputs.publish != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: zenfra-vcs-connector-dist
+          path: dist/*.tar.gz

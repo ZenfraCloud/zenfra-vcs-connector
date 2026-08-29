@@ -49,12 +49,47 @@ Behind a corporate proxy, set `proxy.httpsProxy` / `proxy.noProxy`; for an
 internal CA, mount the PEM bundle with `caBundle.configMapName` plus
 `caBundle.gatewayKey` and/or `caBundle.upstreamKey`.
 
+## Documentation
+
+| | |
+|---|---|
+| [Setup guide](docs/setup.md) | Create a connector, run an instance, bind an integration, troubleshoot |
+| [Security model](docs/security.md) | Threat model and the properties this connector guarantees |
+| [Optional modes](docs/optional-modes.md) | `control_plane` credentials and blocklist policy, and what each gives up |
+| [Contributing](CONTRIBUTING.md) | Build, test, and the gates that fail the build |
+| [Security policy](SECURITY.md) | Reporting a vulnerability |
+
+## Building from source
+
+```bash
+go build ./...
+go test -race ./...
+```
+
+Go 1.26.3 or later; no other tooling is required. The module has two direct
+dependencies (`gorilla/websocket`, `google.golang.org/protobuf`) and does not
+depend on anything else in Zenfra.
+
 ## Releases
 
-Tagging `vcs-connector/vX.Y.Z` builds static `linux/amd64` and `linux/arm64`
-binaries, a multi-arch image and `SHA256SUMS`, all signed with cosign.
+Tagging `vX.Y.Z` builds static `linux/amd64` and `linux/arm64` binaries, a
+multi-arch image and `SHA256SUMS`, all signed with cosign keyless.
 
 Builds are reproducible: `scripts/verify-reproducible-build.sh` rebuilds the
 same commit from a second source path and asserts the binaries are
 byte-identical, so a third party can confirm a published binary matches this
 source.
+
+Verify a published release:
+
+```bash
+cosign verify-blob \
+  --certificate-identity-regexp 'https://github.com/ZenfraCloud/zenfra-vcs-connector/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --bundle SHA256SUMS.cosign.bundle SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
+## License
+
+[Apache License 2.0](LICENSE).

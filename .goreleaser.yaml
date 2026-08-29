@@ -34,9 +34,10 @@ archives:
     ids: [connector]
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    # LICENSE joins this list when the module moves to its public repo.
     files:
       - README.md
+      - LICENSE
+      - SECURITY.md
   # The raw binary too, so its digest lands in SHA256SUMS: that is the digest
   # verify-reproducible-build.sh --expect compares against, and the security
   # docs tell customers to read it from the published checksums.
@@ -72,8 +73,20 @@ dockers_v2:
       org.opencontainers.image.source: https://github.com/ZenfraCloud/zenfra-vcs-connector
       org.opencontainers.image.licenses: Apache-2.0
 
-# The monorepo tags connector releases `vcs-connector/vX.Y.Z`, which is not a tag
-# goreleaser can publish a release for. The workflow creates the GitHub release
-# and uploads dist/ itself; goreleaser only builds and pushes images.
+# Tags here are plain vX.Y.Z, so goreleaser publishes the release itself. The
+# workflow attaches the cosign bundle afterwards, since signing happens after
+# the checksums exist.
 release:
-  disable: true
+  footer: |
+    ## Verifying this release
+
+    ```bash
+    cosign verify-blob \
+      --certificate-identity-regexp 'https://github.com/ZenfraCloud/zenfra-vcs-connector/.*' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      --bundle SHA256SUMS.cosign.bundle SHA256SUMS
+    sha256sum -c SHA256SUMS --ignore-missing
+    ```
+
+    The binaries are reproducible: `scripts/verify-reproducible-build.sh --expect <sha256>`
+    rebuilds from source and compares.
