@@ -9,6 +9,6 @@ go 1.26.3
 // are about. CI runs govulncheck, so a future stdlib advisory fails the build.
 toolchain go1.26.6
 
-require google.golang.org/protobuf v1.36.11
+require google.golang.org/protobuf v1.36.12
 
 require github.com/gorilla/websocket v1.5.3
