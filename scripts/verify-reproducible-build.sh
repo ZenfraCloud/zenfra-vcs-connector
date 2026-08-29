@@ -45,8 +45,19 @@ VERSION="${VERSION#v}"
 MODULE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # The release builds with exactly the toolchain go.mod names; pin it here so a
-# verifier's own Go version cannot change the digest.
-BUILD_TOOLCHAIN="${BUILD_TOOLCHAIN:-go$(awk '/^go /{print $2; exit}' "$MODULE_DIR/go.mod")}"
+# verifier's own Go version cannot change the digest. The `toolchain` directive
+# wins where it exists — the `go` directive is a language floor, not the build
+# toolchain, and a patched toolchain produces a different binary.
+detect_toolchain() {
+    local pinned
+    pinned="$(awk '/^toolchain /{print $2; exit}' "$MODULE_DIR/go.mod")"
+    if [ -n "$pinned" ]; then
+        printf '%s' "$pinned"
+    else
+        printf 'go%s' "$(awk '/^go /{print $2; exit}' "$MODULE_DIR/go.mod")"
+    fi
+}
+BUILD_TOOLCHAIN="${BUILD_TOOLCHAIN:-$(detect_toolchain)}"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
