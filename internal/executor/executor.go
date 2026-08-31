@@ -650,6 +650,14 @@ func responseHasBody(method string, status int) bool {
 func readSecret(path string) (string, error) {
 	raw, err := os.ReadFile(path) // #nosec G304 -- the operator chooses the secret path
 	if err != nil {
+		// Docker creates a missing bind-mount source as a directory, silently, so
+		// EISDIR here almost always means the file was never created on the host.
+		// This error is the first thing a customer sees; a bare "is a directory"
+		// sent a real install down a support round-trip.
+		if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
+			return "", fmt.Errorf("secret file %s is a directory — Docker creates one when "+
+				"the bind-mount source did not exist; create the file on the host and remount", path)
+		}
 		// The path is safe to name; the contents never are.
 		return "", fmt.Errorf("reading secret file %s: %w", path, err)
 	}
