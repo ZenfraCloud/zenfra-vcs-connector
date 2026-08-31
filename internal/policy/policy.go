@@ -259,6 +259,21 @@ func decodeProject(segments []string) string {
 
 // normalizeProject makes scope comparison case-insensitive; GitLab namespaces are
 // not case-sensitive in practice and operators type them either way.
+// NormalizeProjects applies the engine's own normalization to a configured
+// allowlist, dropping entries that normalize to nothing. It exists so the scope
+// the connector advertises to the control plane is byte-identical to the scope
+// this engine enforces — matching on different bytes would make the advertised
+// copy a lie.
+func NormalizeProjects(projects []string) []string {
+	normalized := make([]string, 0, len(projects))
+	for _, project := range projects {
+		if n := normalizeProject(project); n != "" {
+			normalized = append(normalized, n)
+		}
+	}
+	return normalized
+}
+
 func normalizeProject(project string) string {
 	return strings.ToLower(strings.Trim(strings.TrimSpace(project), "/"))
 }

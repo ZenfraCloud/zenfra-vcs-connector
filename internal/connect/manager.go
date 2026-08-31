@@ -14,6 +14,7 @@ import (
 
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/config"
 	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/metrics"
+	"github.com/ZenfraCloud/zenfra-vcs-connector/internal/policy"
 	"github.com/ZenfraCloud/zenfra-vcs-connector/tunnel"
 )
 
@@ -109,6 +110,9 @@ func NewManager(cfg *config.Config, client *Client, dialer *Dialer, version stri
 	if logger == nil {
 		logger = slog.Default()
 	}
+	// Advertise the same bytes the policy engine enforces, so the control
+	// plane's discovery filter and this connector's request filter agree.
+	client.SetAdvertisedScope(policy.NormalizeProjects(cfg.AllowedProjects), cfg.AllProjects)
 	return &Manager{
 		client:      client,
 		dialer:      dialer,

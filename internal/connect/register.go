@@ -79,6 +79,25 @@ func IsRetryable(err error) bool {
 type Client struct {
 	baseURL string
 	http    *http.Client
+
+	// advertisedProjects and advertiseAll ride along on registration so the
+	// control plane can scope repo discovery and refuse out-of-allowlist stack
+	// sources at selection time. A copy for UX, never for enforcement: the
+	// policy engine still decides every tunneled request locally.
+	advertisedProjects []string
+	advertiseAll       bool
+	scopeSet           bool
+}
+
+// SetAdvertisedScope records the project scope registration advertises. Callers
+// pass the normalized allowlist (policy.NormalizeProjects) so the server matches
+// on the same bytes the engine enforces. Never calling this omits the fields
+// entirely, which an older control plane ignores and a newer one reads as
+// "scope unknown" — the pre-0.2.0 behavior.
+func (c *Client) SetAdvertisedScope(projects []string, all bool) {
+	c.advertisedProjects = projects
+	c.advertiseAll = all
+	c.scopeSet = true
 }
 
 // NewClient creates a control-plane client. A nil httpClient gets a default with
@@ -117,7 +136,16 @@ func NewRegistrationClient(tlsCfg *tls.Config) *http.Client {
 // Register exchanges a registration credential — the connector's bootstrap token
 // or this instance's own enrollment key — for an instance record and a fresh JWT.
 func (c *Client) Register(ctx context.Context, credential, instanceKey, version string) (*Instance, error) {
-	body, err := json.Marshal(map[string]string{"instance_key": instanceKey, "version": version})
+	payload := map[string]any{"instance_key": instanceKey, "version": version}
+	if c.scopeSet {
+		projects := c.advertisedProjects
+		if projects == nil {
+			projects = []string{}
+		}
+		payload["allowed_projects"] = projects
+		payload["all_projects"] = c.advertiseAll
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal register request: %w", err)
 	}

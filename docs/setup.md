@@ -86,9 +86,18 @@ Run `zenfra-vcs-connector --help` for the full list.
 
 ### Container
 
+Create the secret files **before** `docker run` — if the mount source does not
+exist, Docker silently creates it as a directory and the connector fails with
+"secret file is a directory".
+
 ```bash
-printf '%s' 'glpat-XXXXXXXXXXXX' > /etc/zenfra/vcs-token
-chmod 0400 /etc/zenfra/vcs-token
+sudo mkdir -p /etc/zenfra /var/lib/zenfra-connector
+printf '%s' 'glpat-XXXXXXXXXXXX' | sudo tee /etc/zenfra/vcs-token >/dev/null
+# 0644, not 0400: the image runs as UID 65532 (distroless nonroot), so a
+# root-owned 0400 file is unreadable inside the container. Alternatively
+# `chown 65532` and keep it 0600.
+sudo chmod 0644 /etc/zenfra/vcs-token
+sudo chown 65532:65532 /var/lib/zenfra-connector
 
 docker run -d --restart=unless-stopped --name zenfra-vcs-connector \
   -e ZENFRA_VCS_CONNECTOR_GATEWAY_URL=https://api.zenfra.cloud \
@@ -97,9 +106,19 @@ docker run -d --restart=unless-stopped --name zenfra-vcs-connector \
   -e ZENFRA_VCS_CONNECTOR_VENDOR=gitlab \
   -e ZENFRA_VCS_CONNECTOR_ALLOWED_PROJECTS=42,1337 \
   -e ZENFRA_VCS_CONNECTOR_SECRET_FILE=/run/secrets/vcs-token \
+  -e ZENFRA_VCS_CONNECTOR_ENROLLMENT_KEY_FILE=/state/enrollment-key \
+  -e ZENFRA_VCS_CONNECTOR_INSTANCE_KEY="$(hostname)" \
   -v /etc/zenfra/vcs-token:/run/secrets/vcs-token:ro \
+  -v /var/lib/zenfra-connector:/state \
   ghcr.io/zenfracloud/zenfra-vcs-connector:latest
 ```
+
+The state volume and `ENROLLMENT_KEY_FILE` persist this instance's own
+enrollment key, so restarts re-authenticate as the same instance instead of
+re-registering with the fleet-wide bootstrap token — without it, per-instance
+revocation cannot do its job. `INSTANCE_KEY` pins a stable identity; left
+unset it defaults to the container ID, which changes on every recreate and
+piles up instance records until the 30-day reclaim.
 
 No `-p` and no docker socket: the connector needs neither. That is the "no inbound
 path" property, enforced by your `docker run` line rather than promised by us.

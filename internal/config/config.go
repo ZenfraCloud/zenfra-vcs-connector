@@ -311,7 +311,17 @@ func (c *Config) checkRequired() error {
 	// Trimmed in place for the same reason: an untrimmed token becomes an invalid
 	// Authorization header value, which net/http rejects as a transport error the
 	// registration client then retries forever instead of exiting 2.
-	c.BootstrapToken = strings.TrimSpace(c.BootstrapToken)
+	trimmed := strings.TrimSpace(c.BootstrapToken)
+	// Set-but-blank is a different mistake than unset: it almost always means a
+	// shell substitution like "$(cat /etc/zenfra/bootstrap-token)" ran against a
+	// file that did not exist and handed the container an empty string. Seen in
+	// a real install; the generic "is required" sent the operator the wrong way.
+	if trimmed == "" && c.BootstrapToken != "" && !c.hasEnrollmentKey() {
+		return fmt.Errorf("%w: %s is set but empty — if it came from "+
+			"\"$(cat <file>)\", that file likely does not exist on the host",
+			ErrInvalidConfig, EnvBootstrapToken)
+	}
+	c.BootstrapToken = trimmed
 	if c.BootstrapToken == "" && !c.hasEnrollmentKey() {
 		return fmt.Errorf("%w: --bootstrap-token is required (or set %s) "+
 			"until this instance has enrolled and persisted an enrollment key",
