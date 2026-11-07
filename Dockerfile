@@ -1,7 +1,7 @@
 # ABOUTME: Multi-stage Dockerfile for the customer-run Zenfra VCS Connector.
 # ABOUTME: Static binary on a minimal base; the connector needs no shell, git or docker.
 
-FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.3-alpine AS builder
+FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.10-alpine AS builder
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=dev
